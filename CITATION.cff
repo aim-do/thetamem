@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "ThetaMem: signed multiplicative key lifts for fixed-state sequence memory"
+version: 0.1.0
+date-released: "2026-08-12"
+license: PolyForm-Small-Business-1.0.0
+authors:
+  - name: "Ultimamind SRL"
+    country: BE
+    email: hi@aim.do
+repository-code: "https://github.com/aim-do/tethamem"
+url: "https://github.com/aim-do/tethamem"
+preferred-citation:
+  type: article
+  title: "ThetaMem: Signed Multiplicative Lifts for Fixed-State Sequence Memory"
+  authors:
+    - name: "The ThetaMem Project"
+  year: 2026
+  notes: "Versioned technical paper, Public Preview v0.1"

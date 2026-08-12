@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thetamem"
+version = "0.1.0"
+description = "Signed multiplicative key lifts for fixed-state sequence memory"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Ultimamind SRL", email = "hi@aim.do" }]
+license = "PolyForm-Small-Business-1.0.0"
+license-files = [
+    "LICENSE",
+    "NOTICE",
+    "LICENSING.md",
+    "PATENTS.md",
+    "THIRD_PARTY_NOTICES.md",
+]
+dependencies = ["torch>=2.4", "numpy>=1.24"]
+keywords = [
+    "sequence-modeling",
+    "linear-attention",
+    "associative-memory",
+    "fast-weights",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+fla = ["flash-linear-attention"]
+
+[project.urls]
+Homepage = "https://github.com/aim-do/tethamem"
+Repository = "https://github.com/aim-do/tethamem"
+Documentation = "https://github.com/aim-do/tethamem/tree/main/docs"
+Issues = "https://github.com/aim-do/tethamem/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

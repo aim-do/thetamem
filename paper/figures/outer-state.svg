@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 430" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#444"/>
+    </marker>
+  </defs>
+
+  <text x="20" y="26" font-size="15" font-weight="bold" fill="#111">The outer-product state</text>
+  <text x="20" y="44" font-size="11" fill="#555">two F-wide branches allocate an F × F physical grid; usable rank depends on the branch sources</text>
+
+  <!-- ============ branch a (vertical vector) ============ -->
+  <text x="76" y="96" font-size="12" text-anchor="middle" fill="#111">W_a k</text>
+  <!-- cells: signed colors: + #c8503c (warm), − #3c78c8 (cool) -->
+  <g stroke="#666" stroke-width="0.8">
+    <rect x="60" y="106" width="32" height="32" fill="#c8503c"/>
+    <rect x="60" y="138" width="32" height="32" fill="#2f66b4"/>
+    <rect x="60" y="170" width="32" height="32" fill="#f2c4b8"/>
+    <rect x="60" y="202" width="32" height="32" fill="#2f66b4"/>
+    <rect x="60" y="234" width="32" height="32" fill="#c8503c"/>
+  </g>
+  <text x="76" y="128" font-size="11" text-anchor="middle" fill="#fff">+</text>
+  <text x="76" y="160" font-size="11" text-anchor="middle" fill="#fff">−</text>
+  <text x="76" y="192" font-size="11" text-anchor="middle" fill="#8a4030">+</text>
+  <text x="76" y="224" font-size="11" text-anchor="middle" fill="#fff">−</text>
+  <text x="76" y="256" font-size="11" text-anchor="middle" fill="#fff">+</text>
+  <text x="76" y="288" font-size="10.5" text-anchor="middle" fill="#555">F rows</text>
+
+  <!-- ⊗ -->
+  <text x="118" y="192" font-size="18" text-anchor="middle" fill="#111">⊗</text>
+
+  <!-- ============ branch b (horizontal vector) ============ -->
+  <text x="240" y="96" font-size="12" text-anchor="middle" fill="#111">W_b k</text>
+  <g stroke="#666" stroke-width="0.8">
+    <rect x="160" y="106" width="32" height="32" fill="#2f66b4"/>
+    <rect x="192" y="106" width="32" height="32" fill="#c8503c"/>
+    <rect x="224" y="106" width="32" height="32" fill="#f2c4b8"/>
+    <rect x="256" y="106" width="32" height="32" fill="#c8503c"/>
+    <rect x="288" y="106" width="32" height="32" fill="#2f66b4"/>
+  </g>
+  <text x="176" y="128" font-size="11" text-anchor="middle" fill="#fff">−</text>
+  <text x="208" y="128" font-size="11" text-anchor="middle" fill="#fff">+</text>
+  <text x="240" y="128" font-size="11" text-anchor="middle" fill="#8a4030">+</text>
+  <text x="272" y="128" font-size="11" text-anchor="middle" fill="#fff">+</text>
+  <text x="304" y="128" font-size="11" text-anchor="middle" fill="#fff">−</text>
+  <text x="240" y="98" font-size="10.5" text-anchor="middle" fill="#555" dy="-14">F columns</text>
+
+  <!-- ============ F x F grid ============ -->
+  <!-- signs follow the product of the two vectors above -->
+  <g stroke="#666" stroke-width="0.7">
+    <!-- cell sign and intensity = product of row (a) and column (b) entries;
+         a = [+S, -S, +W, -S, +S], b = [-S, +S, +W, +S, -S];
+         strong+ #c8503c, strong- #2f66b4, pale+ #f2c4b8, pale- #c9d9ef,
+         very pale + #f7ded7 (weak x weak) -->
+    <!-- row 1: a=+S -->
+    <rect x="160" y="150" width="32" height="32" fill="#2f66b4"/>
+    <rect x="192" y="150" width="32" height="32" fill="#c8503c"/>
+    <rect x="224" y="150" width="32" height="32" fill="#f2c4b8"/>
+    <rect x="256" y="150" width="32" height="32" fill="#c8503c"/>
+    <rect x="288" y="150" width="32" height="32" fill="#2f66b4"/>
+    <!-- row 2: a=−S -->
+    <rect x="160" y="182" width="32" height="32" fill="#c8503c"/>
+    <rect x="192" y="182" width="32" height="32" fill="#2f66b4"/>
+    <rect x="224" y="182" width="32" height="32" fill="#c9d9ef"/>
+    <rect x="256" y="182" width="32" height="32" fill="#2f66b4"/>
+    <rect x="288" y="182" width="32" height="32" fill="#c8503c"/>
+    <!-- row 3: a=+W -->
+    <rect x="160" y="214" width="32" height="32" fill="#c9d9ef"/>
+    <rect x="192" y="214" width="32" height="32" fill="#f2c4b8"/>
+    <rect x="224" y="214" width="32" height="32" fill="#f7ded7"/>
+    <rect x="256" y="214" width="32" height="32" fill="#f2c4b8"/>
+    <rect x="288" y="214" width="32" height="32" fill="#c9d9ef"/>
+    <!-- row 4: a=−S -->
+    <rect x="160" y="246" width="32" height="32" fill="#c8503c"/>
+    <rect x="192" y="246" width="32" height="32" fill="#2f66b4"/>
+    <rect x="224" y="246" width="32" height="32" fill="#c9d9ef"/>
+    <rect x="256" y="246" width="32" height="32" fill="#2f66b4"/>
+    <rect x="288" y="246" width="32" height="32" fill="#c8503c"/>
+    <!-- row 5: a=+S (rank-1 grid: repeats row 1) -->
+    <rect x="160" y="278" width="32" height="32" fill="#2f66b4"/>
+    <rect x="192" y="278" width="32" height="32" fill="#c8503c"/>
+    <rect x="224" y="278" width="32" height="32" fill="#f2c4b8"/>
+    <rect x="256" y="278" width="32" height="32" fill="#c8503c"/>
+    <rect x="288" y="278" width="32" height="32" fill="#2f66b4"/>
+  </g>
+  <!-- diagonal highlight: hadamard = diagonal -->
+  <g fill="none" stroke="#111" stroke-width="2">
+    <rect x="160" y="150" width="32" height="32"/>
+    <rect x="192" y="182" width="32" height="32"/>
+    <rect x="224" y="214" width="32" height="32"/>
+    <rect x="256" y="246" width="32" height="32"/>
+    <rect x="288" y="278" width="32" height="32"/>
+  </g>
+  <text x="240" y="326" font-size="11" text-anchor="middle" fill="#111">Φ(k) = (W_a k) ⊗ (W_b k) : F² physical signed cells</text>
+  <text x="240" y="342" font-size="10.5" text-anchor="middle" fill="#555">same-source linear rank ≤ min(F², d(d+1)/2)</text>
+  <text x="240" y="358" font-size="10.5" text-anchor="middle" fill="#555">outlined diagonal = the elementwise (Hadamard) lift</text>
+
+  <!-- ============ ⊗ v ============ -->
+  <text x="356" y="222" font-size="18" text-anchor="middle" fill="#111">⊗</text>
+
+  <!-- value vector -->
+  <text x="410" y="140" font-size="12" text-anchor="middle" fill="#111">v</text>
+  <g stroke="#666" stroke-width="0.8">
+    <rect x="394" y="150" width="32" height="26" fill="#8fbf8a"/>
+    <rect x="394" y="176" width="32" height="26" fill="#b7d8b3"/>
+    <rect x="394" y="202" width="32" height="26" fill="#5e9e58"/>
+    <rect x="394" y="228" width="32" height="26" fill="#d9ead7"/>
+    <rect x="394" y="254" width="32" height="26" fill="#79b073"/>
+  </g>
+  <text x="410" y="298" font-size="10.5" text-anchor="middle" fill="#555">V values</text>
+
+  <text x="452" y="222" font-size="16" text-anchor="middle" fill="#111">=</text>
+
+  <!-- ============ 3D state block ============ -->
+  <g>
+    <!-- back face -->
+    <polygon points="530,132 660,132 700,102 570,102" fill="#f0e2cf" stroke="#c07820" stroke-width="1"/>
+    <!-- right face -->
+    <polygon points="660,132 700,102 700,232 660,262" fill="#e6cfae" stroke="#c07820" stroke-width="1"/>
+    <!-- front face grid -->
+    <g stroke="#c07820" stroke-width="0.7">
+      <rect x="530" y="132" width="130" height="130" fill="#fdf3e7"/>
+      <line x1="530" y1="164.5" x2="660" y2="164.5"/>
+      <line x1="530" y1="197" x2="660" y2="197"/>
+      <line x1="530" y1="229.5" x2="660" y2="229.5"/>
+      <line x1="562.5" y1="132" x2="562.5" y2="262"/>
+      <line x1="595" y1="132" x2="595" y2="262"/>
+      <line x1="627.5" y1="132" x2="627.5" y2="262"/>
+    </g>
+    <!-- depth strokes -->
+    <line x1="660" y1="164.5" x2="700" y2="134.5" stroke="#c07820" stroke-width="0.6"/>
+    <line x1="660" y1="197" x2="700" y2="167" stroke="#c07820" stroke-width="0.6"/>
+    <line x1="660" y1="229.5" x2="700" y2="199.5" stroke="#c07820" stroke-width="0.6"/>
+  </g>
+  <text x="595" y="286" font-size="11.5" text-anchor="middle" fill="#111">state S ∈ ℝ^(F×F×V)</text>
+  <text x="595" y="302" font-size="10.5" text-anchor="middle" fill="#555">accumulated over tokens: S += Φ(k) ⊗ v</text>
+  <text x="706" y="252" font-size="10.5" fill="#555">V deep</text>
+
+  <!-- ============ factorized read note ============ -->
+  <rect x="530" y="322" width="370" height="78" rx="6" fill="#f5f8fb" stroke="#7a93a8" stroke-width="1"/>
+  <text x="546" y="342" font-size="11.5" fill="#111">factorized pair score; dense carried state</text>
+  <text x="546" y="362" font-size="11.5" fill="#333">⟨Φ(q), Φ(k)⟩ = (W_a q · W_a k) (W_b q · W_b k)</text>
+  <text x="546" y="380" font-size="10" fill="#555">local score: two F-wide dot products</text>
+  <text x="546" y="394" font-size="10" fill="#555">state read/write: Θ(F²V) per token</text>
+
+  <!-- ============ functional-rank inset ============ -->
+  <rect x="736" y="60" width="172" height="118" rx="6" fill="#fbfbfb" stroke="#bbb" stroke-width="1"/>
+  <text x="822" y="80" font-size="10.5" font-weight="bold" text-anchor="middle" fill="#111">functional-rank scope</text>
+  <text x="822" y="100" font-size="9.5" text-anchor="middle" fill="#333">same d-wide source:</text>
+  <text x="822" y="115" font-size="9.5" text-anchor="middle" fill="#333">≤ min(F², d(d+1)/2)</text>
+  <text x="822" y="135" font-size="9.5" text-anchor="middle" fill="#333">disjoint or independent sources:</text>
+  <text x="822" y="150" font-size="9.5" text-anchor="middle" fill="#333">can span all F² cells</text>
+  <text x="822" y="168" font-size="9" text-anchor="middle" fill="#555">physical state remains F² × V</text>
+
+  <!-- connecting arrows -->
+  <line x1="330" y1="214" x2="346" y2="214" stroke="#444" stroke-width="1.1" marker-end="url(#arr2)"/>
+  <line x1="466" y1="214" x2="526" y2="214" stroke="#444" stroke-width="1.1" marker-end="url(#arr2)"/>
+</svg>

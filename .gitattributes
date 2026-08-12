@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.pdf binary
+*.pt binary
+*.pth binary
+*.safetensors binary
+*.ckpt binary
