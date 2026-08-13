@@ -28,8 +28,8 @@ PAPER_DIR = Path(__file__).resolve().parent
 DEFAULT_SOURCE = PAPER_DIR / "ThetaMem-Signed-Multiplicative-Lifts.md"
 DEFAULT_OUTPUT = PAPER_DIR / "ThetaMem-Signed-Multiplicative-Lifts.pdf"
 ALLOWED_LINK_SCHEMES = {"http", "https", "mailto"}
-PREVIEW_LABEL = "ThetaMem - Public Preview v0.1"
-PDF_DATE = "D:20260812000000+02'00'"
+PREVIEW_LABEL = "ThetaMem - Public Preview v0.1.1"
+PDF_DATE = "D:20260813000000+02'00'"
 
 
 CSS = r"""

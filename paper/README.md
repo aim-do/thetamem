@@ -24,7 +24,7 @@ collaborators who opt in and make substantive research contributions.
   title   = {ThetaMem: Signed Multiplicative Lifts for Fixed-State Sequence Memory},
   author  = {{The ThetaMem Project}},
   year    = {2026},
-  note    = {Versioned technical paper, Public Preview v0.1},
+  note    = {Versioned technical paper, Public Preview v0.1.1},
 }
 ```
 

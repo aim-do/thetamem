@@ -9,24 +9,38 @@ linear-time sequence models.*
 ## Abstract
 
 > Fixed-state token mixers process a sequence in linear time by writing every
-> token into a state of constant size. What such a state can do is set by
-> several properties at once: its **capacity** (how many records fit), its
-> **noise** (the part of a read that comes from every record except the one
-> asked for), and its **retention** (how long a record survives later writes).
-> ΘetaMem is a memory design that improves these properties together, in
-> search of the most efficient state: the most usable records per state float,
-> per trained parameter, and per unit of compute.
+> token into a state of constant size. The linear time is why the family
+> matters; the constant size is why it forgets: new writes land on top of old
+> records, and a memory that cannot keep everything should at least keep the
+> **latest record for each key** readable. Even that is not granted: between
+> its write and the query that finally needs it, a record degrades under every
+> intervening write — *even writes of dissimilar tokens*, because all writes
+> spend the same shared feature directions — and a single corrective write
+> does not stop the drift. What such a state can do is set by several
+> properties at once: its **capacity** (how many records fit), its **noise**
+> (the part of a read that comes from every record except the one asked for),
+> and its **retention** (how long a record survives later writes). Three
+> levers move that budget — a larger state, key nonlinearities that make
+> unrelated records interfere less, and corrections cheap enough to repeat
+> until the records decorrelate. ΘetaMem is a memory design that pulls all
+> three levers at once, in search of the most efficient state: the most
+> usable records per state float, per trained parameter, and per unit of
+> compute.
 >
 > The paper is organized around four hypotheses about how to spend a fixed
 > state, and it reports what each one currently rests on. **H1**: learned
 > **outer products** enlarge the physical state while keeping the surrounding
-> projections narrow. **H2**: **signed** decorrelated factors address that
-> state better than positive geometries at a comparable key budget, because
-> nonnegative read weights cannot cancel and their cross-talk accumulates
-> coherently. **H3**: Gram-overlap error can be corrected **without erasing**,
-> and one correction is not the natural stopping point. **H4**: signed
-> cancellation is conditional on **centered values**, so centering is part of
-> the mechanism rather than an option.
+> projections narrow — and the same multiplication sharpens the read: a
+> product of two overlaps falls twice as fast as one. **H2**: **signed**
+> decorrelated factors address that state better than positive geometries at
+> a comparable key budget, because nonnegative read weights cannot cancel and
+> their cross-talk accumulates coherently. **H3**: Gram-overlap error can be
+> corrected **without erasing**, and one correction is not the natural
+> stopping point — the practical target is retention: cheap, repeatable
+> corrections that keep the latest record for a key readable under the writes
+> that follow it, without bleeding the archive. **H4**: signed cancellation
+> is conditional on **centered values**, so centering is part of the
+> mechanism rather than an option.
 >
 > The shipped library implements two-factor Hadamard and outer lifts,
 > subtractive value centering, a strict-prefix second pass, a causal
@@ -459,7 +473,7 @@ collaborators without an anonymous author entry.
   title   = {ThetaMem: Signed Multiplicative Lifts for Fixed-State Sequence Memory},
   author  = {{The ThetaMem Project}},
   year    = {2026},
-  note    = {Versioned technical paper, Public Preview v0.1},
+  note    = {Versioned technical paper, Public Preview v0.1.1},
 }
 ```
 
