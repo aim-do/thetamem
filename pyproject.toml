@@ -38,10 +38,10 @@ classifiers = [
 fla = ["flash-linear-attention"]
 
 [project.urls]
-Homepage = "https://github.com/aim-do/tethamem"
-Repository = "https://github.com/aim-do/tethamem"
-Documentation = "https://github.com/aim-do/tethamem/tree/main/docs"
-Issues = "https://github.com/aim-do/tethamem/issues"
+Homepage = "https://github.com/aim-do/thetamem"
+Repository = "https://github.com/aim-do/thetamem"
+Documentation = "https://github.com/aim-do/thetamem/tree/main/docs"
+Issues = "https://github.com/aim-do/thetamem/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

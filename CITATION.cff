@@ -9,8 +9,8 @@ authors:
   - name: "Ultimamind SRL"
     country: BE
     email: hi@aim.do
-repository-code: "https://github.com/aim-do/tethamem"
-url: "https://github.com/aim-do/tethamem"
+repository-code: "https://github.com/aim-do/thetamem"
+url: "https://github.com/aim-do/thetamem"
 preferred-citation:
   type: article
   title: "ThetaMem: Signed Multiplicative Lifts for Fixed-State Sequence Memory"
