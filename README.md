@@ -168,6 +168,13 @@ state the sequence cost remains linear in context length; growing the state
 until it rivals the context eventually gives back the same broad cost pressure
 as attention. Exact accounting is in [Algorithms](docs/ALGORITHMS.md).
 
+`feature_norm="center"` removes the coordinate mean from the **completed** key
+feature. For an outer lift this is global centering of the full tensor product,
+not separate centering of its factors. The chunked `sum`, `second_pass`, and
+`multi_pass` paths apply the exact rank-one correction lazily, preserving the
+factorized local score and the original tensor-state shape and size. The
+`delta` and optional `fla` paths flatten outer features as they already do.
+
 The default `update="sum"` read has **no accumulated-mass denominator**.
 Optional `value_center="running_mean"` subtracts a causal running mean;
 `value_center="exact_mean"` removes the mean exactly through a signed key-mass
@@ -181,6 +188,12 @@ Richardson/heavy-ball/CG and repeated delta, but every iteration rereads the
 completed context. A second sweep is the smallest meaningful replay
 correction; two to five passes are the practical preliminary range at moderate
 load, while CG is the better candidate near the fitted-state ceiling.
+
+There are two independent value-centering controls. A final
+`value_ops=(..., "center")` centers every per-token value vector across its
+coordinates after the preceding ordered frontend transforms.
+`value_center="running_mean"|"exact_mean"` instead centers each channel across
+causal records inside the memory algorithm. They act on different axes.
 
 ## Current research snapshot
 
@@ -283,6 +296,8 @@ layer = thetamem.ThetaMemLayer(
     128, heads=4, key_dim=32, value_dim=64,
     state="outer",              # "hadamard" | "concat" | "outer"
     update="second_pass",       # "sum" | "second_pass" | "multi_pass" | "delta"
+    feature_norm="center",      # final whole-feature coordinate centering
+    value_ops=("conv", "silu", "center"),  # center V after its frontend
     value_center="exact_mean",  # "none" | "running_mean" | "exact_mean"
     backend="chunked",          # "naive" | "chunked" | "fla"
     chunk=256,

@@ -87,6 +87,26 @@ class Concat(Lift):
 
 
 _LOCAL_NORMALIZATIONS = {"center", "l1", "l2", "rms"}
+_FEATURE_NORMS = {"none", "center", "rms", "l2"}
+
+
+class _LiftedFactors(tuple):
+    """Tuple-compatible factor bundle with scan metadata.
+
+    A globally centered outer product is not itself one Kronecker product.
+    Keeping the raw factors plus this flag lets the scan apply the exact
+    rank-one centering correction without materializing the full feature.
+    """
+
+    def __new__(
+        cls,
+        factors: tuple[torch.Tensor, ...],
+        *,
+        centered: bool = False,
+    ) -> "_LiftedFactors":
+        instance = super().__new__(cls, factors)
+        instance.centered = centered
+        return instance
 
 
 def key() -> Key:
@@ -319,7 +339,7 @@ class LiftModule(nn.Module):
         eps: float = 1e-6,
     ) -> None:
         super().__init__()
-        if feature_norm not in {"none", "rms", "l2"}:
+        if feature_norm not in _FEATURE_NORMS:
             raise ValueError(f"unknown feature_norm {feature_norm!r}")
         default_width = key_dim if default_width is None else default_width
         _validate_branch_sources(spec)
@@ -383,6 +403,8 @@ class LiftModule(nn.Module):
         return features
 
     def _normalize_top_level(self, features: torch.Tensor) -> torch.Tensor:
+        if self.feature_norm == "center":
+            return self._apply_ops(features, ("center",))
         if self.feature_norm == "rms":
             return self._apply_ops(features, ("rms",))
         if self.feature_norm == "l2":
@@ -435,9 +457,17 @@ class LiftModule(nn.Module):
             )
         cursor = [0]
         if isinstance(self.spec, Outer):
+            raw_factors = tuple(
+                self._evaluate(factor, x, cursor)
+                for factor in self.spec.factors
+            )
+            if self.feature_norm == "center":
+                # Centering the complete outer feature is represented lazily.
+                # The scan uses K_c = K - sum(q)sum(k)/feature_width and keeps
+                # the original tensor-state axes.
+                return _LiftedFactors(raw_factors, centered=True)
             factors = tuple(
-                self._normalize_top_level(self._evaluate(f, x, cursor))
-                for f in self.spec.factors
+                self._normalize_top_level(factor) for factor in raw_factors
             )
         else:
             factors = (

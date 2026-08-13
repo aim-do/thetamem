@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Added `feature_norm="center"` as final whole-feature coordinate centering.
+  Flat lifts are centered after their complete expression. Outer lifts use an
+  exact lazy rank-one correction in chunked `sum`, `second_pass`, and
+  `multi_pass`, preserving factorized chunk-local scores and the existing
+  tensor `state_shape` and `state_size`; `delta` and `fla` retain their
+  existing flat-feature materialization.
+- Clarified the existing ordered
+  `value_ops=(..., "center")` frontend option: it centers each per-token value
+  vector across coordinates after preceding transformations. This remains
+  separate from `value_center="running_mean"|"exact_mean"`, which centers each
+  value channel across causal records inside the memory algorithm.
+
 ## 0.1.0 — 2026-08-12
 
 **First public release.** The additive lane of the signed multiplicative-lift

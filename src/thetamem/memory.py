@@ -72,9 +72,12 @@ class ThetaMemory(nn.Module):
             Both are subtractive; nothing is divided.
         backend: ``"naive"``, ``"chunked"``, or ``"fla"``.
         chunk: chunk length for the chunked backend.
-        feature_norm: ``"none"``, ``"rms"``, or ``"l2"`` applied after the
-            complete flat lift, or independently to each top-level outer
-            factor.
+        feature_norm: ``"none"``, ``"center"``, ``"rms"``, or ``"l2"``.
+            ``"center"`` subtracts the coordinate mean after the complete
+            lift. For an outer product this is an exact lazy rank-one
+            correction, not separate factor centering, so the tensor state
+            and factorized chunk score are preserved. RMS and L2 apply after
+            a flat lift or independently to each top-level outer factor.
     """
 
     def __init__(

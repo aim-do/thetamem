@@ -71,10 +71,14 @@ processed = normalize(key_part(0, 2), "center", "l2")
 
 This local node is different from `ThetaMemory(feature_norm=...)`:
 `normalize()` runs exactly where it appears in the expression, while
-`feature_norm` is a whole-lift shorthand applied after the complete flat lift,
-or independently after each top-level outer factor. `normalize()` is the
-general form and supports `"center"` and `"l1"` as well; prefer it, and read
-`feature_norm` as a convenience for the common case.
+`feature_norm` is a top-level operation. For a flat lift, it runs after the
+complete Hadamard or concatenation has been formed. For an outer lift,
+`feature_norm="center"` means exact **global** centering of the complete tensor
+product, not independent centering of its factors; the factorized executor
+represents that operation lazily. Top-level `"rms"` and `"l2"` retain their
+per-factor outer behavior. Use `normalize()` when an operation belongs on a
+particular source or branch, and `feature_norm` when it belongs on the final
+address feature.
 
 ### `hadamard(*factors)`
 
@@ -117,6 +121,39 @@ within-chunk score and avoid a full product-feature tensor there, but exact
 carried-state updates and reads still touch the product width. Delta and FLA
 materialize the flat Kronecker feature.
 
+`feature_norm="center"` subtracts the coordinate mean after the **complete**
+lift. For an outer feature
+
+$$
+\phi = \bigotimes_j f_j, \qquad R = \prod_j F_j,
+$$
+
+the centered feature is
+
+$$
+\phi_c = \phi - \operatorname{mean}(\phi)\mathbf{1}.
+$$
+
+It is not `outer(center(f_1), ..., center(f_m))`. The chunked `sum`,
+`second_pass`, and `multi_pass` paths apply the equivalent rank-one kernel
+correction directly to the separate factors:
+
+$$
+\phi_c(q)^\mathsf{T}\phi_c(k)
+= \prod_j f_j(q)^\mathsf{T}f_j(k)
+- \frac{
+    \left(\prod_j \mathbf{1}^\mathsf{T}f_j(q)\right)
+    \left(\prod_j \mathbf{1}^\mathsf{T}f_j(k)\right)
+  }{R}.
+$$
+
+Thus exact global centering preserves the factorized chunk-local score and
+the original outer `state_shape` and `state_size`; no full-context
+`[B,H,T,R]` feature tensor is introduced on these paths. Centered features
+lie in the `(R-1)`-dimensional zero-sum hyperplane. The `delta` and `fla`
+backends materialize the centered flat feature, just as they already
+materialize the uncentered Kronecker feature.
+
 Allocated width is not automatically functional rank. With two bias-free
 linear branches of the same `d`-wide key,
 `outer(branch(Fa), branch(Fb))` has `Fa*Fb` physical rows but rank at most
@@ -149,7 +186,7 @@ ThetaMemory(
     value_center="none",     # "none" | "running_mean" | "exact_mean"
     backend="chunked",       # "naive" | "chunked" | "fla"
     chunk=256,
-    feature_norm="none",     # "none" | "rms" | "l2"
+    feature_norm="none",     # "none" | "center" | "rms" | "l2"
     eps=1e-6,
 )
 ```
@@ -199,6 +236,15 @@ qualifier says how the mean is obtained:
 The signed key mass is read and **subtracted** here. It is not a denominator:
 positive-feature designs must divide by their accumulated mass, and a signed
 mass can pass through zero, so dividing by it would be unsafe.
+
+This is distinct from `ThetaMemLayer(value_ops=(..., "center"))`. A final
+`"center"` frontend operation subtracts the coordinate mean of **each** value
+vector after all preceding ordered transformations, so every `[B,H,T,:]`
+vector sums to zero across its `V` coordinates before entering
+`ThetaMemory`. In contrast, `value_center="running_mean"` and
+`"exact_mean"` center each value channel across causal time/records inside
+the memory algorithm. The two options act on different axes and may be used
+together deliberately.
 
 Properties:
 
@@ -320,6 +366,11 @@ key and no additional lift matrix. With `state="hadamard"` the direct product
 except RoPE. Operations absent from a tuple are not run and their convolution
 modules are not created.
 
+Because these pipelines are ordered, a final `"center"` in `value_ops`
+centers each value vector across its `value_dim` coordinates **after** the
+preceding Conv/SiLU/etc. It is coordinate centering, not the causal
+record-axis centering selected by `value_center`.
+
 The defaults are the frontend used by every recorded run:
 
 ```text
@@ -330,6 +381,20 @@ V:   projection -> causal Conv -> SiLU -> memory
 Examples:
 
 ```python
+# Exact final feature centering. The outer state remains factorized in the
+# chunked sum/second_pass/multi_pass executors. Values are coordinate-centered
+# only after Conv -> SiLU.
+centered_outer = ThetaMemLayer(
+    128,
+    heads=4,
+    key_dim=32,
+    value_dim=64,
+    state="outer",
+    feature_norm="center",
+    value_ops=("conv", "silu", "center"),
+    backend="chunked",
+)
+
 # Projected Q/K go directly to the chosen lift; V keeps its tested frontend.
 raw_qk = ThetaMemLayer(
     qk_ops=(),

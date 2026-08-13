@@ -111,7 +111,10 @@ class ThetaMemLayer(nn.Module):
     ``qk_ops`` and ``value_ops`` execute from left to right.  Their defaults
     preserve the original frontend.  Removing all operations gives a direct
     projected stream; including ``"conv"`` creates and accounts for the
-    corresponding causal convolution cache.
+    corresponding causal convolution cache.  Appending ``"center"`` to
+    ``value_ops`` subtracts each token/head value vector's coordinate mean
+    after the preceding transforms.  This is distinct from ``value_center``,
+    which centers each value channel over causal time inside the memory.
 
     ``qk_projection="linear"`` produces one ``key_dim`` vector per head.
     ``"direct_hadamard"`` produces two such vectors directly from the token

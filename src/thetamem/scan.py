@@ -53,13 +53,39 @@ Factors = tuple[torch.Tensor, ...]
 REPLAY_SOLVERS = ("cg", "richardson", "heavy_ball", "delta")
 
 
-def flatten_factors(factors: Factors) -> torch.Tensor:
-    """Materialize the flat feature vector (Kronecker product per token)."""
+def _features_centered(factors: Factors) -> bool:
+    """Whether factors lazily represent a globally centered outer feature."""
+    return bool(getattr(factors, "centered", False))
+
+
+def _matching_center_mode(q_factors: Factors, k_factors: Factors) -> bool:
+    q_centered = _features_centered(q_factors)
+    k_centered = _features_centered(k_factors)
+    if q_centered != k_centered:
+        raise ValueError("query and key features must use the same centering")
+    return q_centered
+
+
+def _flatten_raw_factors(factors: Factors) -> torch.Tensor:
+    """Materialize a Kronecker feature without applying lazy centering."""
     flat = factors[0]
     for factor in factors[1:]:
         flat = (flat.unsqueeze(-1) * factor.unsqueeze(-2)).reshape(
             *flat.shape[:-1], -1
         )
+    return flat
+
+
+def flatten_factors(factors: Factors) -> torch.Tensor:
+    """Materialize the represented feature vector per token.
+
+    A factor bundle produced by ``feature_norm="center"`` is centered only
+    here. Factorized chunked paths use the equivalent rank-one score
+    correction and do not call this function for their local score tiles.
+    """
+    flat = _flatten_raw_factors(factors)
+    if _features_centered(factors):
+        flat = flat - flat.mean(-1, keepdim=True)
     return flat
 
 
@@ -71,12 +97,19 @@ def _state_update(
     keys: torch.Tensor,
     values: torch.Tensor,
     dtype: torch.dtype,
+    centered: bool = False,
 ) -> torch.Tensor:
     """Compute a carried-state update in the state accumulation dtype."""
     with torch.autocast(device_type=keys.device.type, enabled=False):
-        return torch.matmul(
+        update = torch.matmul(
             keys.to(dtype).transpose(-1, -2), values.to(dtype)
         )
+        if centered:
+            # Project the complete feature axis, C=I-11^T/F.  The state keeps
+            # its original width and a raw query reads it exactly because the
+            # projected state's feature-axis sum is zero.
+            update = update - update.mean(-2, keepdim=True)
+        return update
 
 
 def _state_read(
@@ -94,16 +127,31 @@ def _flatten_state_factors(
 ) -> torch.Tensor:
     """Materialize factors after promotion, outside mixed-precision autocast."""
     with torch.autocast(device_type=factors[0].device.type, enabled=False):
-        return flatten_factors(tuple(factor.to(dtype) for factor in factors))
+        return _flatten_raw_factors(
+            tuple(factor.to(dtype) for factor in factors)
+        )
 
 
 def _factor_scores(
-    q_factors: Factors, k_factors: Factors
+    q_factors: Factors,
+    k_factors: Factors,
+    centered: bool = False,
 ) -> torch.Tensor:
     """Product of per-factor score matrices: ``[..., Tq, Tk]``."""
     score = torch.matmul(q_factors[0], k_factors[0].transpose(-1, -2))
     for q_factor, k_factor in zip(q_factors[1:], k_factors[1:]):
         score = score * torch.matmul(q_factor, k_factor.transpose(-1, -2))
+    if centered:
+        q_sum = q_factors[0].sum(-1)
+        k_sum = k_factors[0].sum(-1)
+        width = q_factors[0].shape[-1]
+        for q_factor, k_factor in zip(q_factors[1:], k_factors[1:]):
+            q_sum = q_sum * q_factor.sum(-1)
+            k_sum = k_sum * k_factor.sum(-1)
+            width *= q_factor.shape[-1]
+        score = score - (
+            q_sum.unsqueeze(-1) * k_sum.unsqueeze(-2) / width
+        )
     return score
 
 
@@ -130,8 +178,13 @@ def _exclusive_cumsum(update: torch.Tensor) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 
-def _sum_naive(q_factors: Factors, k_factors: Factors, values: torch.Tensor) -> torch.Tensor:
-    score = _factor_scores(q_factors, k_factors).tril()
+def _sum_naive(
+    q_factors: Factors,
+    k_factors: Factors,
+    values: torch.Tensor,
+    centered: bool = False,
+) -> torch.Tensor:
+    score = _factor_scores(q_factors, k_factors, centered).tril()
     return torch.matmul(score, values)
 
 
@@ -163,6 +216,7 @@ def _sum_chunked_factored(
     k_factors: Factors,
     values: torch.Tensor,
     chunk: int,
+    centered: bool = False,
 ) -> torch.Tensor:
     time = values.shape[2]
     state: torch.Tensor | None = None
@@ -173,7 +227,7 @@ def _sum_chunked_factored(
         bq = tuple(f[:, :, start:stop] for f in q_factors)
         bk = tuple(f[:, :, start:stop] for f in k_factors)
         bv = values[:, :, start:stop]
-        block = torch.matmul(_factor_scores(bq, bk).tril(), bv)
+        block = torch.matmul(_factor_scores(bq, bk, centered).tril(), bv)
         if state is not None:
             block = block + _state_read(
                 _flatten_state_factors(bq, state_dtype), state, block.dtype
@@ -181,7 +235,7 @@ def _sum_chunked_factored(
         outputs.append(block)
         if stop < time:
             flat_keys = _flatten_state_factors(bk, state_dtype)
-            update = _state_update(flat_keys, bv, state_dtype)
+            update = _state_update(flat_keys, bv, state_dtype, centered)
             state = update if state is None else state + update
     return torch.cat(outputs, dim=2)
 
@@ -195,12 +249,17 @@ def sum_read(
     chunk: int = 256,
 ) -> torch.Tensor:
     """Read ``y_t = <Phi(q_t), S_t>`` from the causal sum state."""
+    centered = _matching_center_mode(q_factors, k_factors)
     if backend == "naive":
-        return _sum_naive(q_factors, k_factors, values)
+        return _sum_naive(q_factors, k_factors, values, centered)
     if backend == "chunked":
         if len(q_factors) == 1:
-            return _sum_chunked_flat(q_factors[0], k_factors[0], values, chunk)
-        return _sum_chunked_factored(q_factors, k_factors, values, chunk)
+            query = flatten_factors(q_factors) if centered else q_factors[0]
+            keys = flatten_factors(k_factors) if centered else k_factors[0]
+            return _sum_chunked_flat(query, keys, values, chunk)
+        return _sum_chunked_factored(
+            q_factors, k_factors, values, chunk, centered
+        )
     if backend == "fla":
         return _sum_fla(flatten_factors(q_factors), flatten_factors(k_factors), values)
     raise ValueError(f"unknown backend {backend!r}")
@@ -212,12 +271,15 @@ def sum_read(
 
 
 def _second_pass_naive(
-    q_factors: Factors, k_factors: Factors, values: torch.Tensor
+    q_factors: Factors,
+    k_factors: Factors,
+    values: torch.Tensor,
+    centered: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    key_score = _factor_scores(k_factors, k_factors)
+    key_score = _factor_scores(k_factors, k_factors, centered)
     prediction = torch.matmul(key_score.tril(-1), values)
     residual = values - prediction
-    read_score = _factor_scores(q_factors, k_factors).tril()
+    read_score = _factor_scores(q_factors, k_factors, centered).tril()
     return torch.matmul(read_score, values), torch.matmul(read_score, residual)
 
 
@@ -259,6 +321,7 @@ def _second_pass_chunked_factored(
     k_factors: Factors,
     values: torch.Tensor,
     chunk: int,
+    centered: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     time = values.shape[2]
     value_dim = values.shape[-1]
@@ -272,7 +335,7 @@ def _second_pass_chunked_factored(
         bk = tuple(f[:, :, start:stop] for f in k_factors)
         bv = values[:, :, start:stop]
         flat_keys = _flatten_state_factors(bk, state_dtype)
-        key_score = _factor_scores(bk, bk)
+        key_score = _factor_scores(bk, bk, centered)
         prediction = torch.matmul(key_score.tril(-1), bv)
         if base_state is not None:
             prediction = prediction + _state_read(
@@ -280,7 +343,9 @@ def _second_pass_chunked_factored(
             )
         residual = bv - prediction
         packed = torch.cat((bv, residual), dim=-1)
-        block = torch.matmul(_factor_scores(bq, bk).tril(), packed)
+        block = torch.matmul(
+            _factor_scores(bq, bk, centered).tril(), packed
+        )
         if base_state is not None:
             packed_states = torch.cat((base_state, residual_state), dim=-1)
             block = block + _state_read(
@@ -290,8 +355,12 @@ def _second_pass_chunked_factored(
             )
         outputs.append(block)
         if stop < time:
-            base_update = _state_update(flat_keys, bv, state_dtype)
-            residual_update = _state_update(flat_keys, residual, state_dtype)
+            base_update = _state_update(
+                flat_keys, bv, state_dtype, centered
+            )
+            residual_update = _state_update(
+                flat_keys, residual, state_dtype, centered
+            )
             base_state = (
                 base_update if base_state is None else base_state + base_update
             )
@@ -321,15 +390,20 @@ def second_pass_read(
     them. The strict-prefix boundary is mandatory — an inclusive prediction
     would leak the token's own value into its residual.
     """
+    centered = _matching_center_mode(q_factors, k_factors)
     if backend == "naive":
-        return _second_pass_naive(q_factors, k_factors, values)
+        return _second_pass_naive(
+            q_factors, k_factors, values, centered
+        )
     if backend == "chunked":
         if len(q_factors) == 1:
+            query = flatten_factors(q_factors) if centered else q_factors[0]
+            keys = flatten_factors(k_factors) if centered else k_factors[0]
             return _second_pass_chunked_flat(
-                q_factors[0], k_factors[0], values, chunk
+                query, keys, values, chunk
             )
         return _second_pass_chunked_factored(
-            q_factors, k_factors, values, chunk
+            q_factors, k_factors, values, chunk, centered
         )
     if backend == "fla":
         return _second_pass_fla(
@@ -348,9 +422,10 @@ def _multi_pass_naive(
     k_factors: Factors,
     values: torch.Tensor,
     strengths: torch.Tensor,
+    centered: bool = False,
 ) -> torch.Tensor:
-    read_score = _factor_scores(q_factors, k_factors).tril()
-    key_score = _factor_scores(k_factors, k_factors).tril(-1)
+    read_score = _factor_scores(q_factors, k_factors, centered).tril()
+    key_score = _factor_scores(k_factors, k_factors, centered).tril(-1)
     iterate = values
     for index in range(strengths.shape[0]):
         prediction = iterate + torch.matmul(key_score, iterate)
@@ -365,6 +440,7 @@ def _multi_pass_chunked(
     values: torch.Tensor,
     strengths: torch.Tensor,
     chunk: int,
+    centered: bool = False,
 ) -> torch.Tensor:
     time = values.shape[2]
     passes = strengths.shape[0]
@@ -376,8 +452,8 @@ def _multi_pass_chunked(
         bq = tuple(f[:, :, start:stop] for f in q_factors)
         bk = tuple(f[:, :, start:stop] for f in k_factors)
         bv = values[:, :, start:stop]
-        read_score = _factor_scores(bq, bk).tril()
-        key_score = _factor_scores(bk, bk).tril(-1)
+        read_score = _factor_scores(bq, bk, centered).tril()
+        key_score = _factor_scores(bk, bk, centered).tril(-1)
         carried = states[0] is not None
         flat_keys = (
             _flatten_state_factors(bk, state_dtype)
@@ -408,7 +484,9 @@ def _multi_pass_chunked(
         outputs.append(block)
         if stop < time:
             for index, iterate_values in enumerate(iterates):
-                update = _state_update(flat_keys, iterate_values, state_dtype)
+                update = _state_update(
+                    flat_keys, iterate_values, state_dtype, centered
+                )
                 states[index] = (
                     update if states[index] is None else states[index] + update
                 )
@@ -459,11 +537,18 @@ def multi_pass_read(
     read of the last full iterate, shape ``[B, H, T, V]``. Each pass needs a
     separate carried state in the chunked implementation.
     """
+    centered = _matching_center_mode(q_factors, k_factors)
     if backend == "naive":
-        return _multi_pass_naive(q_factors, k_factors, values, strengths)
+        return _multi_pass_naive(
+            q_factors, k_factors, values, strengths, centered
+        )
     if backend == "chunked":
+        if len(q_factors) == 1 and centered:
+            q_factors = (flatten_factors(q_factors),)
+            k_factors = (flatten_factors(k_factors),)
+            centered = False
         return _multi_pass_chunked(
-            q_factors, k_factors, values, strengths, chunk
+            q_factors, k_factors, values, strengths, chunk, centered
         )
     if backend == "fla":
         return _multi_pass_fla(
@@ -565,6 +650,7 @@ def delta_read(
     state axes, so factorized lifts are materialized to their flat features
     first; the flat width is the practical bound for this update.
     """
+    _matching_center_mode(q_factors, k_factors)
     query = flatten_factors(q_factors)
     keys = flatten_factors(k_factors)
     if backend == "naive":
@@ -603,9 +689,17 @@ def _validate_replay_inputs(
 
 
 def _factorized_write(
-    factors: Factors, values: torch.Tensor, dtype: torch.dtype
+    factors: Factors,
+    values: torch.Tensor,
+    dtype: torch.dtype,
+    centered: bool = False,
 ) -> torch.Tensor:
-    """Reduce factorized feature/value writes into a dense tensor state."""
+    """Reduce factorized feature/value writes into a dense tensor state.
+
+    Global feature centering is the projection ``C = I - 11^T/R`` over all
+    factor axes together.  Applying it to the completed state is exactly the
+    same as centering every Kronecker feature, without flattening the factors.
+    """
     factor_axes = list(range(3, 3 + len(factors)))
     value_axis = 3 + len(factors)
     operands: list[object] = []
@@ -613,13 +707,20 @@ def _factorized_write(
         for factor, axis in zip(factors, factor_axes):
             operands.extend((factor.to(dtype), [0, 1, 2, axis]))
         operands.extend((values.to(dtype), [0, 1, 2, value_axis]))
-        return torch.einsum(
+        state = torch.einsum(
             *operands, [0, 1, *factor_axes, value_axis]
         )
+        if centered:
+            feature_dims = tuple(range(2, state.ndim - 1))
+            state = state - state.mean(dim=feature_dims, keepdim=True)
+        return state
 
 
 def _factorized_read(
-    factors: Factors, state: torch.Tensor, output_dtype: torch.dtype
+    factors: Factors,
+    state: torch.Tensor,
+    output_dtype: torch.dtype,
+    centered: bool = False,
 ) -> torch.Tensor:
     """Contract factorized features with a dense tensor state."""
     factor_axes = list(range(3, 3 + len(factors)))
@@ -631,9 +732,26 @@ def _factorized_read(
         operands.extend(
             (state, [0, 1, *factor_axes, value_axis])
         )
-        return torch.einsum(
+        output = torch.einsum(
             *operands, [0, 1, 2, value_axis]
-        ).to(output_dtype)
+        )
+        if centered:
+            # (C phi)^T S = phi^T S - mean(phi) * 1^T S.  Fitted centered
+            # states already have zero feature sum; retaining the correction
+            # also makes replay_read exact for an externally supplied state.
+            feature_sum = factors[0].to(state.dtype).sum(-1)
+            width = factors[0].shape[-1]
+            for factor in factors[1:]:
+                feature_sum = feature_sum * factor.to(state.dtype).sum(-1)
+                width *= factor.shape[-1]
+            feature_dims = tuple(range(2, state.ndim - 1))
+            state_sum = state.sum(dim=feature_dims)
+            output = output - (
+                feature_sum.unsqueeze(-1)
+                * state_sum.unsqueeze(2)
+                / width
+            )
+        return output.to(output_dtype)
 
 
 def _state_inner(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
@@ -668,7 +786,12 @@ def replay_read(q_factors: Factors, state: torch.Tensor) -> torch.Tensor:
         )
     if state.device != q_factors[0].device:
         raise ValueError("queries and state must be on one device")
-    return _factorized_read(q_factors, state, q_factors[0].dtype)
+    return _factorized_read(
+        q_factors,
+        state,
+        q_factors[0].dtype,
+        _features_centered(q_factors),
+    )
 
 
 def replay_fit(
@@ -736,7 +859,8 @@ def replay_fit(
         raise ValueError("momentum is only valid for solver='heavy_ball'")
 
     dtype = _state_dtype(values)
-    rhs = _factorized_write(k_factors, values, dtype)
+    centered = _features_centered(k_factors)
+    rhs = _factorized_write(k_factors, values, dtype, centered)
     state = torch.zeros_like(rhs)
 
     if solver == "delta":
@@ -746,16 +870,24 @@ def replay_fit(
                 factors_t = tuple(
                     factor[:, :, index : index + 1] for factor in k_factors
                 )
-                prediction = _factorized_read(factors_t, state, dtype)
+                prediction = _factorized_read(
+                    factors_t, state, dtype, centered
+                )
                 residual = strength * (
                     values[:, :, index : index + 1].to(dtype) - prediction
                 )
-                state = state + _factorized_write(factors_t, residual, dtype)
+                state = state + _factorized_write(
+                    factors_t, residual, dtype, centered
+                )
         return state
 
     def normal_action(candidate: torch.Tensor) -> torch.Tensor:
-        prediction = _factorized_read(k_factors, candidate, dtype)
-        return _factorized_write(k_factors, prediction, dtype)
+        prediction = _factorized_read(
+            k_factors, candidate, dtype, centered
+        )
+        return _factorized_write(
+            k_factors, prediction, dtype, centered
+        )
 
     if solver in ("richardson", "heavy_ball"):
         assert strength is not None
