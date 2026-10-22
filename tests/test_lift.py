@@ -10,6 +10,7 @@ from thetamem import (
     key_part,
     normalize,
     outer,
+    roll,
     state_lift,
 )
 from thetamem.lift import LiftModule
@@ -37,10 +38,25 @@ class LiftAlgebraTest(unittest.TestCase):
             concat(outer(branch(4), branch(4)), key())
 
     def test_state_lift_names(self):
-        for name in ("hadamard", "concat", "outer"):
+        for name in ("hadamard", "concat", "outer", "shifted_hadamard"):
             state_lift(name)
         with self.assertRaises(ValueError):
             state_lift("kronecker")
+
+    def test_roll_validates_its_arguments(self):
+        with self.assertRaises(TypeError):
+            roll(outer(key(), key()))
+        with self.assertRaises(TypeError):
+            roll(key(), shifts=True)
+        with self.assertRaises(TypeError):
+            roll(key(), shifts=1.0)
+
+    def test_shifted_hadamard_has_no_feature_width(self):
+        with self.assertRaises(ValueError):
+            state_lift("shifted_hadamard", feature_width=4)
+        # Halves must exist: an odd key fails when the lift is materialized.
+        with self.assertRaises(ValueError):
+            LiftModule(state_lift("shifted_hadamard"), heads=2, key_dim=7)
 
     def test_hadamard_width_mismatch_fails_at_materialization(self):
         spec = hadamard(branch(8), branch(16))
@@ -122,6 +138,25 @@ class LiftModuleTest(unittest.TestCase):
         torch.testing.assert_close(factors[3], projected)
         self.assertEqual(module.axis_widths, (4, 4, 4, 3))
         self.assertEqual(module.branch_weights[0].shape, (2, 3, 4))
+
+    def test_roll_matches_torch_roll(self):
+        for shifts in (1, -1, 3, 4):
+            module = self._module(roll(key_part(1, 2), shifts))
+            self.assertEqual(module.axis_widths, (4,))
+            (features,) = module(self.x)
+            torch.testing.assert_close(
+                features, torch.roll(self.x[..., 4:], shifts, dims=-1)
+            )
+
+    def test_shifted_hadamard_preset(self):
+        module = self._module(state_lift("shifted_hadamard"))
+        self.assertEqual(module.axis_widths, (8,))
+        self.assertEqual(module.state_shape(6), (8, 6))
+        self.assertEqual(len(module.branch_weights), 0)
+        (features,) = module(self.x)
+        a, b = self.x[..., :4], self.x[..., 4:]
+        expected = torch.cat((a * b, a * torch.roll(b, 1, dims=-1)), dim=-1)
+        torch.testing.assert_close(features, expected, rtol=0, atol=0)
 
     def test_independent_branches(self):
         module = self._module(state_lift("hadamard"))

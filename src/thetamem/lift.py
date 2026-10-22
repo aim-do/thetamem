@@ -12,6 +12,7 @@ The constructors are intentionally small and composable:
 - ``branch()`` applies a learned per-head projection, optionally to a selected
   and normalized key part.
 - ``normalize()`` applies local operations before an enclosing product.
+- ``roll()`` circularly shifts the coordinates of a flat block.
 - ``hadamard()`` multiplies equal-width blocks elementwise.
 - ``concat()`` forms a direct sum of flat blocks.
 - ``outer()`` makes two or more flat blocks separate state axes.
@@ -34,6 +35,7 @@ __all__ = [
     "key",
     "key_part",
     "normalize",
+    "roll",
     "hadamard",
     "outer",
     "concat",
@@ -63,6 +65,12 @@ class KeyPart(Lift):
 class Normalize(Lift):
     source: Lift
     ops: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class Roll(Lift):
+    source: Lift
+    shifts: int = 1
 
 
 @dataclass(frozen=True)
@@ -202,6 +210,21 @@ def _require_flat(node: Lift, context: str) -> None:
         raise TypeError(f"{context} cannot contain outer")
 
 
+def roll(source: Lift, shifts: int = 1) -> Roll:
+    """Circularly shift the coordinates of a flat block (no parameters).
+
+    ``roll(b, 1)`` moves coordinate ``i`` to ``i + 1`` modulo the block width,
+    exactly as ``torch.roll(b, 1, dims=-1)``.  Inside a product it pairs every
+    coordinate of one factor with a different coordinate of the other, so a
+    second product of the same two blocks adds new cross terms instead of
+    repeating the first.
+    """
+    _require_flat(source, "roll")
+    if isinstance(shifts, bool) or not isinstance(shifts, int):
+        raise TypeError("roll shifts must be an integer")
+    return Roll(source, shifts)
+
+
 def hadamard(*factors: Lift) -> Hadamard:
     """Elementwise product of two or more equal-width flat blocks."""
     if len(factors) < 2:
@@ -229,17 +252,31 @@ def concat(*blocks: Lift) -> Concat:
     return Concat(tuple(blocks))
 
 
-STATE_KINDS = ("hadamard", "concat", "outer")
+STATE_KINDS = ("hadamard", "concat", "outer", "shifted_hadamard")
 
 
 def state_lift(state: str, feature_width: int | None = None) -> Lift:
-    """Return one of the three named canonical lift trees."""
+    """Return one of the four named canonical lift trees.
+
+    ``"shifted_hadamard"`` is the parameter-free quadratic address: with the
+    projected key split into halves ``a`` and ``b``, the feature is
+    ``concat(a * b, a * roll(b, 1))``.  Its width is ``key_dim``, so the state
+    is exactly as large as a linear key's; it has no branches, and
+    ``feature_width`` must be left unset.
+    """
     if state == "hadamard":
         return hadamard(branch(feature_width), branch(feature_width))
     if state == "concat":
         return concat(key(), hadamard(branch(feature_width), branch(feature_width)))
     if state == "outer":
         return outer(branch(feature_width), branch(feature_width))
+    if state == "shifted_hadamard":
+        if feature_width is not None:
+            raise ValueError(
+                "shifted_hadamard has no branches; its width is key_dim"
+            )
+        left, right = key_part(0, 2), key_part(1, 2)
+        return concat(hadamard(left, right), hadamard(left, roll(right, 1)))
     raise ValueError(
         f"unknown state kind {state!r}; expected one of {STATE_KINDS}"
     )
@@ -259,7 +296,7 @@ def _node_width(node: Lift, key_dim: int, default_width: int) -> int:
         return key_dim
     if isinstance(node, KeyPart):
         return _part_width(node, key_dim)
-    if isinstance(node, Normalize):
+    if isinstance(node, (Normalize, Roll)):
         return _node_width(node.source, key_dim, default_width)
     if isinstance(node, Branch):
         return node.width if node.width is not None else default_width
@@ -287,7 +324,7 @@ def _collect_branches(node: Lift) -> list[Branch]:
         return [node]
     if isinstance(node, (Key, KeyPart)):
         return []
-    if isinstance(node, Normalize):
+    if isinstance(node, (Normalize, Roll)):
         return _collect_branches(node.source)
     if isinstance(node, Hadamard):
         return [b for f in node.factors for b in _collect_branches(f)]
@@ -309,7 +346,7 @@ def _validate_branch_sources(node: Lift) -> None:
                 "normalization around either"
             )
         return
-    if isinstance(node, Normalize):
+    if isinstance(node, (Normalize, Roll)):
         _validate_branch_sources(node.source)
         return
     if isinstance(node, Hadamard):
@@ -423,6 +460,10 @@ class LiftModule(nn.Module):
         if isinstance(node, Normalize):
             return self._apply_ops(
                 self._evaluate(node.source, x, cursor), node.ops
+            )
+        if isinstance(node, Roll):
+            return torch.roll(
+                self._evaluate(node.source, x, cursor), node.shifts, dims=-1
             )
         if isinstance(node, Branch):
             source = x if node.source is None else self._evaluate(

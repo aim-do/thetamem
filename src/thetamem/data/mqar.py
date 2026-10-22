@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-__all__ = ["generate", "mixture", "TRAIN_MIXTURE", "EVAL_SLICES"]
+__all__ = ["generate", "mixture", "TRAIN_MIXTURE", "EVAL_SLICES", "LONG_EVAL_SLICES"]
 
 #: (seq_len, num_examples, kv_pairs) — the training mixture used by the
 #: recorded MQAR runs (maximum training length 256).
@@ -35,6 +35,16 @@ TRAIN_MIXTURE = (
 EVAL_SLICES = (
     (256, 1_000, 64),
     (1024, 1_000, 256),
+)
+
+#: (seq_len, num_examples, kv_pairs) — the long slices of the 2026-08
+#: matched-state suite, scored as their unweighted mean.  The first two follow
+#: the ``4 * kv_pairs = seq_len`` load diagonal; the last doubles the length at
+#: a fixed 512 pairs, so it isolates length extrapolation from pair load.
+LONG_EVAL_SLICES = (
+    (1024, 1_000, 256),
+    (2048, 1_000, 512),
+    (4096, 1_000, 512),
 )
 
 

@@ -1,17 +1,181 @@
 # Reproducing the experiments
 
 This page records the full protocols behind the numbers in the README and
-the paper, and maps them to the shipped harness. The recorded numbers come
-from the original benchmark harnesses (zoology for MQAR, the MAD suite's
-task definitions vendored into the same harness) on one H100, single seed;
-the examples here reproduce the **protocol**, not the bit pattern.
+the paper, and maps them to the shipped harness. Two trained snapshots are
+recorded. The **2026-08 matched-state suite** (v0.2; one H100 per cell, plus a
+small-state league on Kaggle T4 GPUs) ran in the project's laboratory harness;
+the **v0.1 snapshot** came from the original benchmark harnesses (zoology for
+MQAR, the MAD suite's task definitions vendored into the same harness) on one
+H100. Every number is single-seed. The examples here reproduce the
+**protocol**, not the bit pattern.
 
 Two evidence levels are kept separate below. MQAR and MAD are trained-model
-measurements of shipped layer variants. The capacity programs are deterministic
-NumPy theory surrogates: they isolate algebraic rank, a grouped PSD/self-product
-geometry, and offline replay solvers. They are not additional library
-architectures, trained comparisons, or validation of the library's causal
-`multi_pass` update.
+measurements. The capacity programs are deterministic NumPy theory
+surrogates: they isolate algebraic rank, a grouped PSD/self-product geometry,
+and offline replay solvers. They are not additional library architectures,
+trained comparisons, or validation of the library's causal `multi_pass`
+update.
+
+## Matched-state suite (2026-08)
+
+The v0.2 headline. Every memory is matched on **core state floats** (8,192 per
+memory layer) and key width; the question is what the key geometry alone buys.
+
+- **Shell.** The common shell below (width 128, gated short-convolution block,
+  then the memory block, tied head). Every memory: 4 heads, key width 32, value
+  width 64.
+- **ΘetaMem frontend.** Raw Q/K: bias-free projection -> causal depthwise
+  convolution (width 4) -> lift, with no activation, position, or
+  normalization. V: projection -> convolution -> SiLU. Output: per-head
+  RMSNorm (epsilon 1e-8) times a low-rank SiLU gate. Writes are additive
+  (`update="sum"`) unless a row says otherwise.
+- **Baseline.** Gated DeltaNet-2 in the same shell with its own convolutions,
+  gates, and output normalization, running the official
+  flash-linear-attention Triton operators at pinned revision `595682b8`.
+- **MQAR.** The v0.1 training mixture (vocabulary 8,192, lengths 64-256,
+  4-64 pairs), batch 256, 32 epochs = 22,624 steps, AdamW with weight decay
+  0.1, per-epoch cosine decay. Scored on three long slices,
+  `thetamem.data.mqar.LONG_EVAL_SLICES` = 1,024 tokens / 256 pairs, 2,048 /
+  512, and 4,096 / 512 (1,000 examples each, evaluation seed 1123), and
+  reported as their **unweighted mean**. The last slice doubles length at fixed
+  load. Fillers are drawn from the full vocabulary and can collide with a
+  stored key or value.
+- **MAD.** Fuzzy in-context recall and selective copying at the v0.1
+  settings below (6,400 / 1,280 examples, batch 128, 10,000 steps, weight
+  decay 0).
+- **Grid and numerics.** Learning rates {3.16e-4, 1e-3, 3.16e-3}, one run
+  each at seed 123; the best cell per task is reported, with no automatic
+  grid-edge extension. bf16 autocast with an FP32 loss. ΘetaMem compiled end
+  to end with Inductor behind a fail-closed eager-parity gate; the baseline
+  ran its fused kernels eagerly. One H100 80GB per cell.
+
+```bash
+python examples/mqar.py --state shifted_hadamard --qk-ops conv --position none --eval long --lr 1e-3
+python examples/mad.py --task fuzzy     --state shifted_hadamard --qk-ops conv --position none --lr 1e-3
+python examples/mad.py --task selective --state shifted_hadamard --qk-ops conv --position none --lr 3.16e-3
+```
+
+With these flags the example shell has exactly the recorded parameter counts
+(1,388,288 on MQAR, 341,760 on MAD), and its memory layer,
+`ThetaMemLayer(128, heads=4, key_dim=32, value_dim=64,
+state="shifted_hadamard", qk_ops=("conv",), position="none", eps=1e-8)`, is
+numerically identical to the recorded arm's (same parameter set and
+initialization from the same seed; identical outputs and gradients in a CPU
+check). The linear-key control is the same call with `lift=thetamem.key()`,
+verified the same way.
+The example's default `eps=1e-6` differs from the recorded output-norm
+epsilon of 1e-8; pass a custom shell for an exact match.
+
+Recorded results, best over the grid (score = mean of the three long slices):
+
+| memory (8,192 core state floats) | params (MQAR / MAD) | MQAR score | 1,024 / 256 | 2,048 / 512 | 4,096 / 512 | fuzzy | selective |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Gated DeltaNet-2 | 1,453,764 / 407,236 | 0.1948 | 0.4000 | 0.0974 | 0.0871 | 0.2715 | 0.9187 |
+| ΘetaMem linear key (`lift=key()`) | 1,388,288 / 341,760 | 0.1404 | 0.2793 | 0.0743 | 0.0675 | 0.3844 | 0.1853 |
+| ΘetaMem linear key + 1 deletion replay † | 1,388,292 / 341,764 | 0.0517 | 0.1269 | 0.0157 | 0.0125 | 0.4453 | 0.5567 |
+| ΘetaMem linear key + 2 deletion replays † | 1,388,296 / 341,768 | 0.0112 | 0.0329 | 0.0004 | 0.0004 | 0.3191 | 0.7936 |
+| **ΘetaMem `shifted_hadamard`** | 1,388,288 / 341,760 | **0.4337** | **0.7365** | **0.2919** | **0.2727** | 0.2347 | 0.1858 |
+| ΘetaMem `shifted_hadamard` + 1 deletion replay † | 1,388,292 / 341,764 | 0.3768 | 0.7070 | 0.2307 | 0.1927 | 0.1898 | 0.4557 |
+| ΘetaMem `shifted_hadamard` + 2 deletion replays † | 1,388,296 / 341,768 | 0.1131 | 0.2486 | 0.0513 | 0.0393 | 0.2231 | 0.7746 |
+
+Per-cell grid (learning rate: score), in the order 3.16e-4 / 1e-3 / 3.16e-3:
+
+| memory | MQAR | fuzzy | selective |
+|---|---|---|---|
+| Gated DeltaNet-2 | 0.1559 / **0.1948** / 0.1372 | 0.2116 / **0.2715** / 0.1654 | 0.8389 / **0.9187** / 0.8728 |
+| ΘetaMem linear key | 0.1167 / **0.1404** / 0.0337 | **0.3844** / 0.3097 / 0.3286 | 0.1784 / 0.1839 / **0.1853** |
+| ΘetaMem `shifted_hadamard` | 0.3507 / **0.4337** / 0.1962 | 0.1697 / **0.2347** / 0.2139 | 0.1787 / 0.1819 / **0.1858** |
+
+Follow-up runs under the same protocol, one suite each (the rows are
+directly comparable with the table above; † marks laboratory arms that this
+repository does not build):
+
+| memory (8,192 core state floats) | params (MQAR) | MQAR score | 1,024 / 256 | 2,048 / 512 | 4,096 / 512 | fuzzy | selective |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ΘetaMem `shifted_hadamard`, no Q/K convolution | 1,387,264 | 0.3600 | 0.6437 | 0.2322 | 0.2041 | 0.3048 | 0.1952 |
+| ΘetaMem `shifted_hadamard` + learned causal delta, post-lift L2 † | 1,388,292 | 0.4511 | 0.7642 | 0.3018 | 0.2874 | 0.1793 | 0.7616 |
+| ΘetaMem `shifted_hadamard` + learned Fourier positions, additive † | 1,398,536 | 0.2492 | 0.3315 | 0.2196 | 0.1965 | 0.3443 | 0.9954 |
+| ΘetaMem `shifted_hadamard` + learned Fourier positions, learned delta † | 1,398,540 | 0.2210 | 0.2784 | 0.2090 | 0.1757 | 0.3382 | 0.9951 |
+| same, without Q/K convolution, additive † | 1,397,512 | 0.0656 | 0.1302 | 0.0379 | 0.0288 | 0.3759 | 0.9919 |
+
+Arm definitions:
+
+- **Deletion replay** (laboratory variant of `multi_pass`): the written values
+  are iterated as `w <- w - rho_r * L w`, where `L` is the strict
+  lower-triangular lifted-key Gram, with learned per-head `rho_r`
+  initialized at 0.01; the final iterate is written into the single additive
+  state, so the state does not grow.
+- **Learned causal delta**: the sequential delta rule with one learned
+  sigmoid strength per head (initialized at 1/33) on the L2-normalized lifted
+  key, chunk 32.
+- **Learned Fourier positions**: 16 learned-frequency Fourier features of the
+  position, projected by a zero-initialized 16-to-128 map and added to the
+  Q/K input only; then projection -> convolution -> SiLU -> smooth L2
+  (epsilon 1e-6) -> identity-initialized per-head 32 x 32 maps -> the
+  shifted-split lift.
+
+Readings: the parameter-free quadratic address is the whole MQAR gain
+(0.140 -> 0.434 in one shell, state, and parameter count) and passes the
+baseline 2.2x on the mean and 3.1x at 4,096 tokens without any erasure. An
+additive state has no clock, so selective copying stays near 0.19 until a
+position signal or a correction supplies order; deletion replays buy order
+with recall, and the learned Fourier frontend buys it while staying above the
+baseline on all three tasks. The learned-delta arm has the best recall in the
+suite but the weakest fuzzy recall; with one seed it is not ranked against the
+additive arm.
+
+Several optima sit at a grid edge: every ΘetaMem selective-copying optimum
+(3.16e-3), the MQAR optima of three of the four replay arms and of both
+learned-delta arms (3.16e-4), and several fuzzy-recall optima. The headline
+MQAR cells of Gated DeltaNet-2 and ΘetaMem `shifted_hadamard` both peak at
+the central 1e-3.
+
+Median step times on MQAR were 12.3 ms (ΘetaMem `shifted_hadamard`, compiled)
+and 48.0 ms (Gated DeltaNet-2, eager fused kernels); the comparison crosses
+executors and is not a kernel benchmark.
+
+## Small-state league (Kaggle T4, 2026-08)
+
+The same question at a 16x smaller state, on free Kaggle T4 GPUs.
+
+- **Shell.** The same two-block shell at width 64; every memory has 2 heads,
+  key width 16, value width 16, and **512 core state floats**. FP32
+  activations (TF32 matmuls allowed), Inductor-compiled training behind an
+  eager-parity gate.
+- **MQAR.** Vocabulary 2,048; training lengths/pairs (64, 4), (128, 8),
+  (256, 16), (256, 32); 4,000 steps at batch 64, per-step cosine decay,
+  AdamW weight decay 0.1; scored as the unweighted mean over five slices from
+  64 tokens / 16 pairs to 1,024 / 256. Learning rates {5e-4, 1e-3, 2e-3, 5e-3,
+  1e-2}.
+- **MAD.** Fuzzy recall and selective copying as above, 10,000 steps at batch
+  128, weight decay 0, learning rates {3.16e-4, 1e-3, 3.16e-3}.
+- **Baseline.** A pure-PyTorch chunked implementation of the Gated DeltaNet-2
+  recurrence (channel-wise decay, erase, and write); FLA kernels do not run
+  on T4.
+- Seed 123, evaluation seed 1123, best cell per task.
+
+| memory (512 core state floats) | params (MQAR / MAD) | MQAR | fuzzy | selective |
+|---|---:|---:|---:|---:|
+| Gated DeltaNet-2 (PyTorch reference) | 200,786 / 70,738 | 0.1415 | 0.1477 | 0.8276 |
+| ΘetaMem shifted-split, additive, raw Q/K | 194,880 / 64,832 | 0.3051 | 0.3178 | 0.1994 |
+| ΘetaMem shifted-split, additive, learned Fourier positions † | 196,936 / 66,888 | 0.3435 | 0.3056 | 0.9899 |
+| ΘetaMem shifted-split, learned delta, learned Fourier positions † | 196,938 / 66,890 | 0.3575 | 0.3344 | 0.9896 |
+| ΘetaMem shifted-split, additive, RoPE † | 195,904 / 65,856 | 0.1923 | 0.1892 | 0.9464 |
+
+The raw arm's Q/K path is the bare projection, with no convolution. The two
+learned-Fourier rows and the RoPE row share one frontend — projection ->
+SiLU -> smooth L2 -> identity-initialized per-head 16 x 16 maps -> the
+shifted-split lift, again without Q/K convolution — and differ only in the
+position signal: learned Fourier features added to the Q/K input, or rotary
+position applied before the maps. Both restore copying; the rotation keeps
+0.192 of recall where the learned features keep 0.344.
+
+An earlier MQAR-only screen on the same small shell and MQAR protocol
+agrees: Gated DeltaNet-2 0.197; the shifted-split product 0.294-0.315 over two
+runs; and the parameter-free degree-four split product
+`outer(hadamard(p0, p1), hadamard(p2, p3))` of the key quarters
+`p_i = key_part(i, 4)` 0.27-0.33 over eight repeats of one configuration,
+which also shows the run-to-run spread of this compiled small-GPU setup.
 
 ## Common shell
 
@@ -22,7 +186,7 @@ embedding/head. All memories: 4 heads, projected key width 32, value width
 64. The Gated DeltaNet-2 baseline ran in the same shell with its own
 convolutions and gates; `key 48` denotes its wider-physical-key control.
 
-## MQAR
+## MQAR (v0.1 snapshot)
 
 - Vocabulary 8,192; training mixture `(len 64, 100k examples, 4 pairs)`,
   `(128, 20k, 8)`, `(256, 20k, 16)`, `(256, 20k, 32)`, `(256, 20k, 64)`.
@@ -116,7 +280,7 @@ Isolated 20-step smoke medians were 21.829 / 17.623 / 15.152 ms per step; the
 production run shared one H100 across three workers, so its timings are
 excluded from any latency comparison.
 
-## MAD
+## MAD (v0.1 snapshot)
 
 - Tasks at their standard settings: **fuzzy in-context recall** (vocabulary
   16, length 128, key/value motifs up to 3 tokens, multi-query) and
@@ -232,11 +396,14 @@ full-state read/write cost.
 
 ## Caveats that travel with every number
 
-Single seed; synthetic recall tasks only. Arms are state-matched (hadamard)
-or capacity-scaled (concat, outer), never parameter-matched — the theta
-shell carries ~11% more trainable parameters than the baseline on MQAR and
-more on MAD, where vocabularies are tiny. Recorded step times on the MAD
-runs (theta 19-24 ms, baseline 29-33 ms) compare a compiled theta stack
+Single seed; synthetic recall tasks only. In the 2026-08 suite every arm is
+state-matched and the ΘetaMem shells carry **fewer** trainable parameters than
+the baseline (4.5% fewer on MQAR, 16% fewer on MAD). In the v0.1 snapshot arms
+are state-matched (hadamard) or capacity-scaled (concat, outer), never
+parameter-matched — the theta shell carries ~11% more trainable parameters
+than the baseline on MQAR and more on MAD, where vocabularies are tiny.
+Recorded step times (2026-08 MQAR: theta 12.3 ms, baseline 48.0 ms median;
+v0.1 MAD: theta 19-24 ms, baseline 29-33 ms) compare a compiled theta stack
 against the baseline's eager fused kernels. This harness regenerates data
 with its own seeded generators, so reruns reproduce the procedure, not
 bitwise-identical datasets. Expect run-to-run spread of a few points on the

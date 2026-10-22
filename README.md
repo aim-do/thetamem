@@ -8,85 +8,62 @@ linear-time sequence models.*
 
 ## Abstract
 
-> Fixed-state token mixers process a sequence in linear time by writing every
-> token into a state of constant size. The linear time is why the family
-> matters; the constant size is why it forgets: new writes land on top of old
-> records, and a memory that cannot keep everything should at least keep the
-> **latest record for each key** readable. Even that is not granted: between
-> its write and the query that finally needs it, a record degrades under every
-> intervening write — *even writes of dissimilar tokens*, because all writes
-> spend the same shared feature directions — and a single corrective write
-> does not stop the drift. What such a state can do is set by several
-> properties at once: its **capacity** (how many records fit), its **noise**
-> (the part of a read that comes from every record except the one asked for),
-> and its **retention** (how long a record survives later writes). Three
-> levers move that budget — a larger state, key nonlinearities that make
-> unrelated records interfere less, and corrections cheap enough to repeat
-> until the records decorrelate. ΘetaMem is a memory design that pulls all
-> three levers at once, in search of the most efficient state: the most
-> usable records per state float, per trained parameter, and per unit of
-> compute.
+> Fixed-state token mixers process a sequence in linear time through a state
+> of constant size, and a constant state forgets: every write spends the same
+> shared feature directions, so records blur into one another long before the
+> query that needs them arrives. ΘetaMem fights that interference in the key
+> instead of with erasure. It lifts the projected key with a **signed
+> quadratic Hadamard product**; in its simplest form the key is split into
+> halves `a` and `b` and addresses the memory through
+> `[a ⊙ b, a ⊙ roll(b, 1)]`. The lift adds no parameters and keeps the width
+> of the key, so the state is exactly as large as a linear key's — but the
+> similarity of two tokens becomes a signed degree-two polynomial instead of a
+> dot product, which separates nearby keys more sharply and lets the
+> cross-talk of unrelated records cancel instead of piling up. Writes are
+> purely additive: no decay, no erasure, no gates. The outer product of two
+> learned branches spends the same multiplication on a larger tensor state
+> instead.
 >
-> The paper is organized around four hypotheses about how to spend a fixed
-> state, and it reports what each one currently rests on. **H1**: learned
-> **outer products** enlarge the physical state while keeping the surrounding
-> projections narrow — and the same multiplication sharpens the read: a
-> product of two overlaps falls twice as fast as one. **H2**: **signed**
-> decorrelated factors address that state better than positive geometries at
-> a comparable key budget, because nonnegative read weights cannot cancel and
-> their cross-talk accumulates coherently. **H3**: Gram-overlap error can be
-> corrected **without erasing**, and one correction is not the natural
-> stopping point — the practical target is retention: cheap, repeatable
-> corrections that keep the latest record for a key readable under the writes
-> that follow it, without bleeding the archive. **H4**: signed cancellation
-> is conditional on **centered values**, so centering is part of the
-> mechanism rather than an option.
->
-> The shipped library implements two-factor Hadamard and outer lifts,
-> subtractive value centering, a strict-prefix second pass, a causal
-> repeated-pass approximation, delta writes, and separate non-causal replay
-> solvers. The evidence is mixed in kind, and stated as such.
->
-> H1 and H2 have trained support. On multi-query associative recall, at a
-> state matched to the baseline's 8,192 floats, the elementwise memory reaches
-> **0.668** on a 4× length-extrapolation slice against Gated DeltaNet-2's
-> **0.567**, with no erasure and no correction; given a wider physical key the
-> same baseline reaches **0.814**, and only the tensor state passes it, at
-> **0.976** for 32× the state floats. Against an exact grouped
-> positive-semidefinite (PSD) self-product, trained at equal key width and
-> equal parameters, a signed product state holds a 4,096-token slice at
-> **0.742** where the PSD arm falls to **0.024**. H2 also has an idealized
-> random-key surrogate that isolates geometry alone, where the signed code
-> carries **2.61×** less interference power at nearly equal state. H3 has
-> surrogate support and one nearly neutral trained cell (**0.662** against
-> **0.668**). H4 is implemented and tested but not yet benchmarked.
->
-> The losses are part of the result. On MAD fuzzy recall our constant-state
-> variant reaches **0.181** against the baseline's **0.323** and its wider-key
-> control's **0.596**; only the tensor state passes both, at **0.714**. All
-> trained results are single-seed synthetic studies. The evidence motivates
-> outer products, signed geometry, and multi-step correction; it does not
-> establish a worst-case or language-model capacity law.
+> At a state matched to Gated DeltaNet-2's 8,192 floats, with 4.5% fewer
+> parameters, the additive quadratic memory scores **0.434** on multi-query
+> associative recall over 1,024–4,096-token contexts against the baseline's
+> **0.195** (2.2×), and **0.273** against **0.087** at 4,096 tokens (3.1×);
+> the same memory with a linear key scores 0.140, so the gain is the lift's. A
+> purely additive state has no clock and cannot copy selectively on its own
+> (0.186 against 0.919 on MAD); with learned Fourier position features in
+> front of the lift — a laboratory frontend — the additive memory passes the
+> baseline on all three tasks at once: recall 0.249 against 0.195, fuzzy
+> recall 0.344 against 0.272, selective copying 0.995 against 0.919. At a 16×
+> smaller state of 512 floats the ordering holds (0.344 / 0.306 / 0.990
+> against 0.141 / 0.148 / 0.828). Every number is a single-seed, best-of-grid
+> synthetic result; together they motivate the quadratic signed key, not yet a
+> language-model claim.
 
-— quoted verbatim from the
-[paper](paper/ThetaMem-Signed-Multiplicative-Lifts.pdf); every number above is
-tabulated, with what it is matched on and what it is not, in
+— quoted from the
+[paper](paper/ThetaMem-Signed-Multiplicative-Lifts.pdf) (citation markers and
+math typesetting aside); every number above is tabulated, with what it is
+matched on and what it is not, in
 [the snapshot and its caveats](#current-research-snapshot).
 
 ## What it is
 
-ΘetaMem projects each key through two independently learned matrices and
-multiplies them. The product is quadratic in the key, so unrelated records
-separate faster, and it is **signed**, so their cross-talk cancels in
-expectation instead of piling up with one sign. Taking the **outer** product
-instead of the elementwise one turns those two branches into two axes of a
-tensor state — a much larger memory bought without widening a single
-projection around it.
+ΘetaMem replaces the linear key of a fixed-state memory with a product of two
+projections of it. In its parameter-free form — the arm behind the v0.2
+results — each projected key is split into halves `a` and `b` and addresses
+the state through `[a ⊙ b, a ⊙ roll(b, 1)]`: the feature has the width of the
+key, so the state does not grow, but every coordinate is a product of one
+coordinate from each half, so the similarity of two tokens is a signed
+degree-two polynomial rather than a dot product. In its learned form the two
+factors are independently learned branches, and taking their **outer**
+product instead of the elementwise one turns them into two axes of a tensor
+state — a much larger memory bought without widening a single projection
+around it. Writes are additive; nothing is erased.
 
-**Public Preview v0.1 · 2026-08-12.** The implementation and reasoning are
-public; the benchmark study is in progress — multi-seed replication,
-benchmarking the corrected and centered memories, write gating, fused
-tensor-state kernels, and language-model-scale validation are open.
+**Public Preview v0.2 · 2026-10-22.** The implementation and reasoning are
+public; the benchmark study is in progress — multi-seed replication, a
+position signal for the additive state, benchmarking the corrected and
+centered memories, fused tensor-state kernels, and language-model-scale
+validation are open.
 
 [Paper: *ΘetaMem: Signed Multiplicative Lifts for Fixed-State Sequence Memory* (PDF)](paper/ThetaMem-Signed-Multiplicative-Lifts.pdf) ·
 [Paper source and versions](paper/README.md) ·
@@ -97,6 +74,27 @@ tensor-state kernels, and language-model-scale validation are open.
 [Release notes](CHANGELOG.md)
 
 ## News
+
+- **2026-10-22 — Public Preview v0.2: a parameter-free quadratic address beats
+  Gated DeltaNet-2 at matched state.**
+
+  *Library.* A `roll()` lift node and the `state="shifted_hadamard"` preset —
+  the address of the new headline arm, which the library now rebuilds
+  exactly; `thetamem.data.mqar.LONG_EVAL_SLICES`; example flags `--qk-ops`,
+  `--position`, and `--eval long`.
+
+  *Results.* On one H100 at the baseline's 8,192 state floats and with 4.5%
+  fewer parameters, the additive shifted-split memory scores **0.434** on
+  long-context MQAR (1,024–4,096 tokens) against Gated DeltaNet-2's
+  **0.195**; a linear key in the same shell scores 0.140. With no position
+  signal it cannot copy selectively (0.186 vs 0.919); a laboratory
+  learned-Fourier position frontend makes the additive memory beat the
+  baseline on MQAR, fuzzy recall, and selective copying at once (0.249 /
+  0.344 / 0.995 vs 0.195 / 0.272 / 0.919). The ordering holds at 512 state
+  floats on Kaggle T4s. Single seed throughout.
+
+  *Paper.* Public Preview v0.2: a two-paragraph abstract; the matched-state
+  suite is Section 7.5 and the small-state league Section 7.6.
 
 - **2026-08-12 — Public Preview v0.1: first public release.**
 
@@ -127,54 +125,47 @@ plus a weighted sum of every other record. The established families each fix
 one property of that budget and pay with another. Plain linear attention
 mixes nearby keys, cannot separate them with any linear map, and its state is
 chained to the physical key width. Delta-style memories (DeltaNet, Gated
-DeltaNet-2) write residuals. With full replay, residual iterations can solve
-a least-squares problem through the key Gram matrix; a single causal delta
-pass is not that solver, and corrective writes still share the available
-feature directions. Positive-diagonal self-product memories take another
-route: grouped self-outers make the query/key score a nonnegative sum of
-squared similarities and give the additive read a positive mass mode.
+DeltaNet-2) write residuals and forget through decay and erasure, which keeps
+a crowded state usable at the price of the records they remove; a single
+causal delta pass is not a least-squares solver, and corrective writes still
+share the available feature directions. Positive-diagonal self-product
+memories take another route: grouped self-outers make the query/key score a
+nonnegative sum of squared similarities and give the additive read a positive
+mass mode.
 
-ΘetaMem answers with four hypotheses, and the
-[paper](paper/ThetaMem-Signed-Multiplicative-Lifts.pdf) reports what each one
-currently rests on:
+ΘetaMem changes the weights themselves. A product key makes the read weight a
+degree-two function of the key, so it separates near-duplicate keys that a
+linear key mixes; the product is **signed**, so the cross-talk of unrelated
+records can cancel instead of accumulating with one sign; and it does this
+either at constant state (`shifted_hadamard`, `hadamard`) or with a
+deliberately larger one (`outer`). The cancellation is conditional: it needs
+decorrelated factors and centered unrelated values, and adversarially
+sign-aligned values remove it. Separate maps from the same source are not
+statistically independent, and a larger physical outer state need not have
+equally large functional rank. The
+[paper](paper/ThetaMem-Signed-Multiplicative-Lifts.pdf) develops the argument
+and reports, claim by claim, what currently supports it.
 
-- **H1 — allocation.** Outer products enlarge the state without widening the
-  key projection. *Trained support; its functional-rank ceiling is measured
-  and stated.*
-- **H2 — geometry.** Signed decorrelated factors address a bounded state
-  better than positive geometries at a comparable key budget, because
-  nonnegative read weights cannot cancel. *Supported by a random-key surrogate
-  and by a trained, parameter-matched comparison.*
-- **H3 — correction.** Gram overlap can be corrected without erasing, and one
-  correction is not the natural stopping point. *Direction supported; the
-  quantity is not yet benchmarked.*
-- **H4 — hygiene.** H2 is conditional on centered values. *Implemented and
-  unit-tested; not yet benchmarked.*
+The **product mechanisms** share one scan:
 
-Separate maps from the same source are not statistically independent, and a
-larger physical outer state need not have equally large functional rank; the
-signed advantage requires decorrelated factors and centered unrelated values,
-and is not guaranteed for an arbitrary trained model.
-
-The two core **product mechanisms** use the same learned branch projections:
-
-| state | idea | what it buys |
+| state | lift | what it buys |
 |---|---|---|
-| `"outer"` | every coordinate of one branch pairs with every coordinate of the other | a much larger tensor state and a product similarity |
-| `"hadamard"` | corresponding branch coordinates are multiplied | a product similarity without growing the recurrent state |
+| `"shifted_hadamard"` | each coordinate of one key half times a coordinate of the other, twice, with a one-step circular shift | a signed quadratic similarity at exactly a linear key's state, with no lift parameters |
+| `"hadamard"` | corresponding coordinates of two learned branches are multiplied | a product similarity at constant state, with learned branch geometry |
+| `"outer"` | every coordinate of one learned branch pairs with every coordinate of the other | a much larger tensor state and a product similarity |
 
-The preset builds both branches from one projected key. The lift algebra also
-supports disjoint key parts. Those choices allocate the same kind of tensor
-array but do not have the same functional rank: separate matrices are not the
-same thing as independent information. The
+The learned presets build both branches from one projected key. The lift
+algebra also supports disjoint key parts. Those choices allocate the same
+kind of tensor array but do not have the same functional rank: separate
+matrices are not the same thing as independent information. The
 [`rank_geometry.py`](examples/capacity/rank_geometry.py) surrogate isolates
 that distinction; neither construction promises that training will occupy its
 algebraic upper bound.
 
 Beyond the presets, a small **lift algebra** composes branches, the raw key
-and its parts, elementwise products, direct sums, and outer products into
-custom state layouts, with validation rules that keep every instance
-executable by the same scan machinery.
+and its parts, circular shifts, elementwise products, direct sums, and outer
+products into custom state layouts, with validation rules that keep every
+instance executable by the same scan machinery.
 
 Factorization keeps projection and chunk-local score formation compact, but an
 exact read and write still touches the complete tensor state. For a fixed
@@ -210,6 +201,89 @@ coordinates after the preceding ordered frontend transforms.
 causal records inside the memory algorithm. They act on different axes.
 
 ## Current research snapshot
+
+### Matched-state suite (one H100, 2026-08)
+
+Single seed, best over the learning-rate grid {3.16e-4, 1e-3, 3.16e-3}; two-layer
+models at width 128 (gated short-convolution mixer, then the memory layer);
+every memory at 4 heads, key width 32, value width 64, and exactly **8,192 core
+state floats**. ΘetaMem uses a raw Q/K path (projection → causal convolution →
+lift) and writes additively; Gated DeltaNet-2 runs the official
+flash-linear-attention Triton kernels at a pinned revision. MQAR trains on
+lengths 64-256 (vocabulary 8,192) and is scored as the mean over three long
+slices; MAD runs at its standard settings. Every cell and the full protocol:
+[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md#matched-state-suite-2026-08).
+
+| memory | params | MQAR score | 1,024 / 256 | 2,048 / 512 | 4,096 / 512 | fuzzy | selective |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Gated DeltaNet-2 | 1,453,764 | 0.195 | 0.400 | 0.097 | 0.087 | 0.272 | 0.919 |
+| ΘetaMem, linear key (`lift=key()`) | 1,388,288 | 0.140 | 0.279 | 0.074 | 0.068 | 0.384 | 0.185 |
+| **ΘetaMem `shifted_hadamard`** | 1,388,288 | **0.434** | **0.737** | **0.292** | **0.273** | 0.235 | 0.186 |
+| ΘetaMem `shifted_hadamard` + learned Fourier positions † | 1,398,536 | 0.249 | 0.332 | 0.220 | 0.197 | 0.344 | 0.995 |
+
+Parameters are those of the MQAR models; on MAD they are 407,236 for the
+baseline and 341,760 for the ΘetaMem shells. † Laboratory frontend, not
+shipped: learned Fourier position features added to the Q/K input, then
+convolution → SiLU → L2 → identity-initialized per-head 32 × 32 maps before the
+same shifted-split lift.
+
+### Small states (Kaggle T4, 2026-08)
+
+Width 64, 2 heads, key width 16, value width 16 — **512 core state floats** for
+every memory; FP32; MQAR at vocabulary 2,048, scored as the mean over five
+slices from 64 tokens / 16 pairs to 1,024 / 256; best over five (MQAR) or three
+(MAD) learning rates; one seed. The baseline is a PyTorch reference
+implementation of the Gated DeltaNet-2 recurrence.
+
+| memory | params | MQAR | fuzzy | selective |
+|---|---:|---:|---:|---:|
+| Gated DeltaNet-2 | 200,786 | 0.141 | 0.148 | 0.828 |
+| ΘetaMem shifted-split, raw Q/K | 194,880 | 0.305 | 0.318 | 0.199 |
+| ΘetaMem shifted-split + learned Fourier positions † | 196,936 | 0.344 | 0.306 | 0.990 |
+
+† The laboratory frontend above, without the Q/K convolution and with 16 × 16
+maps.
+
+### How to read the snapshot
+
+**The lift is the gain.** Same shell, same state, same parameter count: a
+linear key scores 0.140 on MQAR and the parameter-free quadratic address
+0.434 — 2.2× the erasing baseline on the mean and 3.1× at 4,096 tokens (0.273
+vs 0.087), with no decay, erasure, gate, or correction. The lift has no
+parameters, so the comparison isolates geometry: the extra separability is
+bought with degree, not with parameters or state.
+
+**Where we lose.** An additive state has no clock. On selective copying the
+quadratic memory stays at 0.186 against the baseline's 0.919, because nothing
+in an additive state records when a record arrived; on fuzzy recall —
+overlapping, rewritten motifs, where erasure genuinely helps — it trails 0.235
+to 0.272. Learned position features fix copying and pass the baseline on all
+three tasks at once, but give back part of the recall gain (0.249), and that
+frontend is not shipped yet. Deletion replays and a learned delta rule,
+reported in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md#matched-state-suite-2026-08),
+trade recall for order in the same way.
+
+**What is matched and what is not.** Core state floats and key width are
+matched exactly, and the ΘetaMem shells carry fewer trainable parameters than
+the baseline (4.5% fewer on MQAR, 16% fewer on MAD). Every number is
+single-seed and the best of a three- to five-point learning-rate grid; the
+ΘetaMem selective-copying optima sit at the grid's edge, while both headline
+MQAR cells peak at the central rate. MQAR's long slices draw fillers from the
+full vocabulary, so they mix retention with collision distractors; every arm
+saw identical tensors. ΘetaMem compiled end to end while the baseline ran its
+fused kernels eagerly, so the step-time observation (12.3 ms vs 48.0 ms median
+per MQAR step) crosses executors.
+
+**What this repository rebuilds.** The `shifted_hadamard` row is
+`ThetaMemLayer(128, heads=4, key_dim=32, value_dim=64, state="shifted_hadamard",
+qk_ops=("conv",), position="none", eps=1e-8)`, and the linear-key row is the
+same call with `lift=thetamem.key()`; both have the recorded arms' parameter
+sets and initialization from the same seed and return identical outputs and
+gradients. The baseline and the † frontends come from the project's laboratory
+harness and are not built here.
+
+<details>
+<summary><b>Earlier snapshot (v0.1, 2026-08-12)</b> — learned Hadamard, concatenated, and outer lifts; signed versus PSD self-product</summary>
 
 Single seed, best over the stated learning-rate grids, one H100; two-layer
 models (gated short-convolution mixer, then the memory layer); all memories
@@ -250,7 +324,7 @@ learning-rate cell; evaluated frozen at four lengths):
 | **signed outer of the two key halves** | 65,536 | 0.999961 | **0.986990** | **0.742194** |
 | signed outer, per-half L1/L2 normalization | 65,536 | 0.999945 | 0.981914 | 0.699979 |
 
-### How to read the snapshot
+**How to read the v0.1 snapshot.**
 
 **Where we win and where we lose.** At matched state the signed additive
 memory beats the erasing baseline on MQAR extrapolation with no correction
@@ -279,6 +353,8 @@ were run in the project's benchmark harness; none of them is built by the
 code in this repository, which ships the ΘetaMem layers and the data
 generators. The examples below re-run the protocol, not the bit pattern.
 
+</details>
+
 ## Install and first forward pass
 
 ```bash
@@ -286,9 +362,9 @@ pip install torch numpy
 pip install -e .
 ```
 
-Start here. Every argument below has a default, and the defaults are the
-recorded configuration: the Hadamard lift, a pure additive `sum`, no value
-centering, and the chunked executor.
+Start here. Every argument below has a default, and the defaults are the v0.1
+recorded configuration: the learned Hadamard lift, a pure additive `sum`, no
+value centering, and the chunked executor.
 
 ```python
 import torch
@@ -300,15 +376,29 @@ y = layer(torch.randn(2, 1024, 128))   # [batch, time, d_model]
 layer.state_size    # 9,728 streaming floats per layer
 ```
 
-Change one thing at a time. `state="outer"` is the tensor memory of the tables
-above — it is the strongest arm we measured and it costs 27× the streaming
-state (263,680 floats per layer), so it is a deliberate choice rather than a
-default:
+The v0.2 headline arm is the parameter-free shifted-split address with the raw
+Q/K frontend it was measured with — the same state, no lift parameters:
 
 ```python
 layer = thetamem.ThetaMemLayer(
     128, heads=4, key_dim=32, value_dim=64,
-    state="outer",              # "hadamard" | "concat" | "outer"
+    state="shifted_hadamard",   # [a*b, a*roll(b, 1)] of the key halves a, b
+    qk_ops=("conv",),           # Q/K: projection -> causal conv -> lift
+    position="none",
+)
+layer.state_size    # 9,728 — exactly what a linear key would use
+```
+
+It has no clock of its own: on selective copying it needs a position signal
+(see the snapshot). Change one thing at a time. `state="outer"` is the tensor
+memory of the v0.1 tables — the strongest arm measured there, at 27× the
+streaming state (263,680 floats per layer), so it is a deliberate choice
+rather than a default:
+
+```python
+layer = thetamem.ThetaMemLayer(
+    128, heads=4, key_dim=32, value_dim=64,
+    state="outer",              # "hadamard" | "concat" | "outer" | "shifted_hadamard"
     update="second_pass",       # "sum" | "second_pass" | "multi_pass" | "delta"
     feature_norm="center",      # final whole-feature coordinate centering
     value_ops=("conv", "silu", "center"),  # center V after its frontend
@@ -319,8 +409,10 @@ layer = thetamem.ThetaMemLayer(
 ```
 
 The memory alone (no projections, no gates) is `thetamem.ThetaMemory`. The
-three presets are shorthands for lift expressions — `state="outer"` is
-`outer(branch(32), branch(32))` — and the algebra builds the rest:
+four presets are shorthands for lift expressions — `state="outer"` is
+`outer(branch(32), branch(32))`, and `state="shifted_hadamard"` is
+`concat(hadamard(a, b), hadamard(a, roll(b, 1)))` with
+`a, b = key_part(0, 2), key_part(1, 2)` — and the algebra builds the rest:
 
 ```python
 import torch
@@ -369,8 +461,18 @@ Scope.
 ### Library examples
 
 Install the package first. The library ships the data generators and a
-minimal harness — no benchmark framework is required. MQAR, the three state
-kinds:
+minimal harness — no benchmark framework is required. The v0.2 matched-state
+arm, with the long MQAR slices and their mean (`--qk-ops` and `--position`
+select the raw Q/K frontend; with them the example shell has exactly the
+recorded parameter counts):
+
+```bash
+python examples/mqar.py --state shifted_hadamard --qk-ops conv --position none --eval long --lr 1e-3
+python examples/mad.py --task fuzzy     --state shifted_hadamard --qk-ops conv --position none --lr 1e-3
+python examples/mad.py --task selective --state shifted_hadamard --qk-ops conv --position none --lr 3.16e-3
+```
+
+The v0.1 snapshot — MQAR with the three learned-lift state kinds:
 
 ```bash
 python examples/mqar.py --state hadamard --lr 3.16e-3
@@ -426,6 +528,7 @@ from thetamem.data import mqar, mad
 
 train_segments = mqar.mixture(mqar.TRAIN_MIXTURE, vocab_size=8192, seed=123)
 eval_segments  = mqar.mixture(mqar.EVAL_SLICES,  vocab_size=8192, seed=1123)
+long_segments  = mqar.mixture(mqar.LONG_EVAL_SLICES, vocab_size=8192, seed=1123)
 inputs, targets = mad.generate("fuzzy", 6400, train=True, seed=123)
 ```
 
@@ -450,16 +553,18 @@ support the reasoning in the paper rather than the benchmark tables.
 
 ## Scope
 
-v0.1 of the library is the additive-and-corrected lane: causal sums, optional
-value centering, a strict-prefix second-state correction, an experimental
-causal triangular `multi_pass`, a sequential delta reference, and global
-offline replay solvers. The shipped `multi_pass` has no **global**
-least-squares convergence claim; `replay_fit` must retain or reconstruct all
-records. No temporal decay banks, no write gating (an open
-direction the paper motivates), no streaming decode path, and the `fla`
-backend delegates flat lifts to the optional `flash-linear-attention` package
-and fails closed otherwise. The chunked executor is portable PyTorch and
-compiles end to end.
+v0.2 of the library is the additive-and-corrected lane: the learned and
+parameter-free (`shifted_hadamard`) product lifts, causal sums, optional value
+centering, a strict-prefix second-state correction, an experimental causal
+triangular `multi_pass`, a sequential delta reference, and global offline
+replay solvers. The shipped `multi_pass` has no **global** least-squares
+convergence claim; `replay_fit` must retain or reconstruct all records. No
+position frontend beyond RoPE — the learned Fourier position features and the
+deletion replays of the 2026-08 snapshot are laboratory code — no temporal
+decay banks, no write gating (an open direction the paper motivates), no
+streaming decode path, and the `fla` backend delegates flat lifts to the
+optional `flash-linear-attention` package and fails closed otherwise. The
+chunked executor is portable PyTorch and compiles end to end.
 
 ## Paper and citation
 
@@ -473,7 +578,7 @@ collaborators without an anonymous author entry.
   title   = {ThetaMem: Signed Multiplicative Lifts for Fixed-State Sequence Memory},
   author  = {{The ThetaMem Project}},
   year    = {2026},
-  note    = {Versioned technical paper, Public Preview v0.1.1},
+  note    = {Versioned technical paper, Public Preview v0.2},
 }
 ```
 

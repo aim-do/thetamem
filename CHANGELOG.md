@@ -1,7 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-10-22
 
+**Public Preview v0.2.** The parameter-free quadratic address behind the
+2026-08 matched-state results, plus the release of the feature-centering work.
+
+- Added the `roll(source, shifts=1)` lift node: a parameter-free circular
+  coordinate shift of a flat block, exactly `torch.roll(x, shifts, dims=-1)`.
+- Added the `state="shifted_hadamard"` preset,
+  `concat(hadamard(a, b), hadamard(a, roll(b, 1)))` over the key halves
+  `a, b = key_part(0, 2), key_part(1, 2)`: a signed degree-two address with no
+  lift parameters and width `key_dim`, so its state equals a linear key's. It
+  rejects `feature_width` and needs an even `key_dim`. With
+  `qk_ops=("conv",)`, `position="none"`, and `eps=1e-8`, `ThetaMemLayer`
+  rebuilds the recorded `theta-shifted-p0` arm exactly (same parameter set and
+  initialization from the same seed; identical outputs and gradients).
+- Added `thetamem.data.mqar.LONG_EVAL_SLICES` — 1,024/256, 2,048/512, and
+  4,096/512 — the long slices of the matched-state suite.
+- Examples: `--qk-ops` and `--position` set the memory layer's Q/K frontend,
+  and `examples/mqar.py --eval long` scores the long slices and prints their
+  mean. The help text keeps its line breaks.
+- README, paper (Public Preview v0.2), and `docs/EXPERIMENTS.md`: the 2026-08
+  matched-state suite on H100 and the 512-float league on Kaggle T4; the
+  abstract is shortened to two paragraphs.
 - Added `feature_norm="center"` as final whole-feature coordinate centering.
   Flat lifts are centered after their complete expression. Outer lifts use an
   exact lazy rank-one correction in chunked `sum`, `second_pass`, and

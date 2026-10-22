@@ -189,12 +189,25 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def _frontend_overrides(args) -> dict:
+    """Q/K frontend options given on the command line; defaults stay implicit."""
+    overrides = {}
+    if getattr(args, "qk_ops", None) is not None:
+        overrides["qk_ops"] = tuple(args.qk_ops)
+    if getattr(args, "position", None) is not None:
+        overrides["position"] = args.position
+    return overrides
+
+
 def describe_memory_call(args) -> str:
     """The exact public API call the example builds — printed for the log."""
+    extra = "".join(
+        f", {name}={value!r}" for name, value in _frontend_overrides(args).items()
+    )
     return (
         "thetamem.ThetaMemLayer(128, heads=4, key_dim=32, value_dim=64, "
         f"state={args.state!r}, update={args.update!r}, passes={args.passes}, "
-        f"backend={args.backend!r}, chunk={args.chunk})"
+        f"backend={args.backend!r}, chunk={args.chunk}{extra})"
     )
 
 
@@ -209,4 +222,17 @@ def build_memory_layer(args) -> ThetaMemLayer:
         passes=args.passes,
         backend=args.backend,
         chunk=args.chunk,
+        **_frontend_overrides(args),
     )
+
+
+def add_frontend_arguments(parser) -> None:
+    """``--qk-ops`` and ``--position``: the Q/K frontend of the memory layer."""
+    parser.add_argument(
+        "--qk-ops",
+        nargs="*",
+        default=None,
+        metavar="OP",
+        help="ordered Q/K operations (layer default: conv silu rope l2)",
+    )
+    parser.add_argument("--position", default=None, choices=("rope", "none"))

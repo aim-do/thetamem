@@ -8,14 +8,15 @@ class PublicApiTest(unittest.TestCase):
         for name in thetamem.__all__:
             self.assertTrue(hasattr(thetamem, name), msg=name)
         self.assertTrue(
-            {"key_part", "normalize", "replay_fit", "replay_read"}
+            {"key_part", "normalize", "roll", "replay_fit", "replay_read"}
             <= set(thetamem.__all__)
         )
+        self.assertIn("shifted_hadamard", thetamem.STATE_KINDS)
 
     def test_version(self):
         import thetamem
 
-        self.assertEqual(thetamem.__version__, "0.1.0")
+        self.assertEqual(thetamem.__version__, "0.2.0")
 
     def test_quickstart(self):
         import torch

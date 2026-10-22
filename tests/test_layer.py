@@ -2,13 +2,13 @@ import unittest
 
 import torch
 
-from thetamem import ThetaMemLayer
+from thetamem import ThetaMemLayer, key
 
 
 class ThetaMemLayerTest(unittest.TestCase):
     def test_forward_shape_all_states(self):
         x = torch.randn(2, 19, 64)
-        for state in ("hadamard", "concat", "outer"):
+        for state in ("hadamard", "concat", "outer", "shifted_hadamard"):
             torch.manual_seed(0)
             layer = ThetaMemLayer(
                 64, heads=2, key_dim=16, value_dim=32, state=state, chunk=8
@@ -131,6 +131,23 @@ class ThetaMemLayerTest(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             ThetaMemLayer(qk_ops=("conv", "conv"))
+
+    def test_shifted_hadamard_costs_what_a_linear_key_costs(self):
+        # The recorded 2026-08 shell: Q/K conv only, no position, no norms.
+        shell = dict(
+            heads=4, key_dim=32, value_dim=64,
+            qk_ops=("conv",), position="none",
+        )
+        shifted = ThetaMemLayer(128, state="shifted_hadamard", **shell)
+        linear = ThetaMemLayer(128, lift=key(), **shell)
+        self.assertEqual(shifted.memory.state_shape, (32, 64))
+        self.assertEqual(shifted.state_size, 4 * 32 * 64 + 1536)
+        self.assertEqual(shifted.state_size, linear.state_size)
+        self.assertEqual(len(shifted.memory.lift.branch_weights), 0)
+        self.assertEqual(
+            sum(p.numel() for p in shifted.parameters()),
+            sum(p.numel() for p in linear.parameters()),
+        )
 
 
 if __name__ == "__main__":

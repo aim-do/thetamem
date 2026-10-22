@@ -3,9 +3,9 @@
 Public surface:
 
 - lift constructors: :func:`branch`, :func:`key`, :func:`key_part`,
-  :func:`normalize`, :func:`hadamard`, :func:`outer`, :func:`concat`, and
-  :func:`state_lift` for the three canonical state kinds (``"hadamard"``,
-  ``"concat"``, ``"outer"``);
+  :func:`normalize`, :func:`roll`, :func:`hadamard`, :func:`outer`,
+  :func:`concat`, and :func:`state_lift` for the four canonical state kinds
+  (``"hadamard"``, ``"concat"``, ``"outer"``, ``"shifted_hadamard"``);
 - :class:`ThetaMemory` — the memory over projected queries/keys/values;
 - :class:`ThetaMemLayer` — a drop-in token mixer around the memory;
 - :func:`replay_fit` / :func:`replay_read` — non-causal replay solvers for a
@@ -25,12 +25,13 @@ from .lift import (
     key_part,
     normalize,
     outer,
+    roll,
     state_lift,
 )
 from .memory import BACKENDS, UPDATES, VALUE_CENTERS, ThetaMemory
 from .scan import REPLAY_SOLVERS, replay_fit, replay_read
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "__version__",
@@ -38,6 +39,7 @@ __all__ = [
     "key",
     "key_part",
     "normalize",
+    "roll",
     "hadamard",
     "outer",
     "concat",

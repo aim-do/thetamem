@@ -6,7 +6,12 @@ decay 0; per-epoch cosine decay; learning-rate grid {5e-4, 1e-3, 3.16e-3},
 one run per invocation. Fuzzy recall trains autoregressively and is scored
 on re-queried values; selective copying is scored on the copied tokens.
 
-The launch configurations this example exposes:
+The matched-state suite's quadratic arm (learning-rate grid
+{3.16e-4, 1e-3, 3.16e-3}):
+
+    python examples/mad.py --task fuzzy --state shifted_hadamard --qk-ops conv --position none --lr 1e-3
+
+The v0.1 launch configurations:
 
     python examples/mad.py --task fuzzy     --state outer    --lr 3.16e-3
     python examples/mad.py --task fuzzy     --state concat   --lr 1e-3
@@ -28,6 +33,7 @@ from thetamem.data import mad
 from common import (
     SequenceModel,
     TrainSettings,
+    add_frontend_arguments,
     build_memory_layer,
     describe_memory_call,
     parameter_count,
@@ -39,13 +45,16 @@ VOCAB_SIZE = 16  # both tasks; already a multiple of eight
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--task", default="fuzzy", choices=mad.TASKS)
     parser.add_argument("--state", default="hadamard", choices=thetamem.STATE_KINDS)
     parser.add_argument("--update", default="sum", choices=thetamem.UPDATES)
     parser.add_argument("--passes", type=int, default=2)
     parser.add_argument("--backend", default="chunked", choices=thetamem.BACKENDS)
     parser.add_argument("--chunk", type=int, default=256)
+    add_frontend_arguments(parser)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--train-examples", type=int, default=6_400)

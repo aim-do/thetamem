@@ -5,7 +5,7 @@ Names listed in `thetamem.__all__` are the supported top-level API.
 ```python
 from thetamem import (
     __version__, Lift,
-    branch, key, key_part, normalize,
+    branch, key, key_part, normalize, roll,
     hadamard, outer, concat, state_lift,
     ThetaMemory, ThetaMemLayer,
     STATE_KINDS, UPDATES, BACKENDS, VALUE_CENTERS,
@@ -79,6 +79,20 @@ represents that operation lazily. Top-level `"rms"` and `"l2"` retain their
 per-factor outer behavior. Use `normalize()` when an operation belongs on a
 particular source or branch, and `feature_norm` when it belongs on the final
 address feature.
+
+### `roll(source, shifts=1)`
+
+Circularly shifts the coordinates of a flat block without adding parameters:
+coordinate `i` moves to `i + shifts` modulo the block width, exactly as
+`torch.roll(x, shifts, dims=-1)`. The width is unchanged. Inside a product it
+pairs every coordinate of one factor with a different coordinate of the
+other, so a second product of the same two blocks adds new cross terms
+instead of repeating the first:
+
+```python
+a, b = key_part(0, 2), key_part(1, 2)
+concat(hadamard(a, b), hadamard(a, roll(b, 1)))   # the "shifted_hadamard" preset
+```
 
 ### `hadamard(*factors)`
 
@@ -165,13 +179,20 @@ expressions rather than benchmarked v0.1 presets.
 
 ### `state_lift(state, feature_width=None)`
 
-The three named presets, each a shorthand for the lift expression beside it:
+The four named presets, each a shorthand for the lift expression beside it:
 
 | name | lift | per-head state |
 |---|---|---|
 | `"hadamard"` | `hadamard(branch(F), branch(F))` | `F x V` |
 | `"concat"` | `concat(key(), hadamard(branch(F), branch(F)))` | `(Dk + F) x V` |
 | `"outer"` | `outer(branch(F), branch(F))` | `F x F x V` |
+| `"shifted_hadamard"` | `concat(hadamard(a, b), hadamard(a, roll(b, 1)))`, with `a, b = key_part(0, 2), key_part(1, 2)` | `Dk x V` |
+
+`"shifted_hadamard"` is the parameter-free quadratic address of the 2026-08
+matched-state suite: every feature is a signed product of one coordinate of
+each key half, its width is `key_dim`, and its state is exactly the size a
+linear key would occupy. It has no branches, so it rejects `feature_width`;
+`key_dim` must be even.
 
 ## `ThetaMemory`
 
@@ -371,16 +392,33 @@ centers each value vector across its `value_dim` coordinates **after** the
 preceding Conv/SiLU/etc. It is coordinate centering, not the causal
 record-axis centering selected by `value_center`.
 
-The defaults are the frontend used by every recorded run:
+The defaults are the frontend of the v0.1 recorded runs:
 
 ```text
 Q/K: projection -> causal Conv -> SiLU -> RoPE -> L2 -> memory
 V:   projection -> causal Conv -> SiLU -> memory
 ```
 
+The 2026-08 matched-state suite used a raw Q/K path instead: projection ->
+causal Conv -> memory, with no activation, position, or normalization.
+
 Examples:
 
 ```python
+# The quadratic arm of the 2026-08 matched-state suite: parameter-free
+# shifted-split Hadamard address, additive writes, Q/K conv only. The recorded
+# runs used eps=1e-8, which here only affects the output RMSNorm.
+shifted = ThetaMemLayer(
+    128,
+    heads=4,
+    key_dim=32,
+    value_dim=64,
+    state="shifted_hadamard",
+    qk_ops=("conv",),
+    position="none",
+    eps=1e-8,
+)
+
 # Exact final feature centering. The outer state remains factorized in the
 # chunked sum/second_pass/multi_pass executors. Values are coordinate-centered
 # only after Conv -> SiLU.
@@ -455,7 +493,9 @@ The tradeoff is temporary memory proportional to the product width.
   power_a=0.01, seed=0, random_fillers=True)` creates one MQAR segment
   (`inputs`, `labels`, with `-100` off answer positions).
 - `mixture(segments, *, vocab_size, seed)` creates a list of segments;
-  `TRAIN_MIXTURE` and `EVAL_SLICES` contain the recorded protocol.
+  `TRAIN_MIXTURE` and `EVAL_SLICES` contain the v0.1 recorded protocol, and
+  `LONG_EVAL_SLICES` (1,024/256, 2,048/512, 4,096/512) the long slices of the
+  2026-08 matched-state suite, whose score is their unweighted mean.
 
 ### `thetamem.data.mad`
 

@@ -7,6 +7,11 @@ full protocols, launch grids, and recorded reference numbers are in
 [docs/EXPERIMENTS.md](../docs/EXPERIMENTS.md).
 
 ```bash
+# the 2026-08 matched-state suite: parameter-free quadratic address, raw Q/K
+python mqar.py --state shifted_hadamard --qk-ops conv --position none --eval long --lr 1e-3
+python mad.py  --task fuzzy --state shifted_hadamard --qk-ops conv --position none --lr 1e-3
+
+# the v0.1 snapshot
 python mqar.py --state hadamard --lr 3.16e-3
 python mqar.py --state concat   --lr 1e-3
 python mqar.py --state outer    --lr 1e-3
@@ -15,7 +20,11 @@ python mad.py --task fuzzy     --state outer    --lr 3.16e-3
 python mad.py --task selective --state hadamard --lr 1e-3
 ```
 
-`--update second_pass` selects one correction;
+`--qk-ops` and `--position` set the memory layer's Q/K frontend (default:
+`conv silu rope l2` with RoPE); `--eval long` scores MQAR on the three long
+slices of the matched-state suite and prints their mean. With these flags the
+shell has exactly the recorded suite's parameter counts (1,388,288 on MQAR,
+341,760 on MAD). `--update second_pass` selects one correction;
 `--update multi_pass --passes 3` repeats it; `--update delta` selects the
 causal delta reference. `--smoke` runs a tiny CPU sanity pass. Every script prints the exact
 `thetamem` API call it builds, so the configuration is the log.

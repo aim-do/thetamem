@@ -42,13 +42,14 @@ class ThetaMemory(nn.Module):
         key_dim: width of the projected key and query.
         value_dim: width of the values.
         heads: number of heads.
-        state: one of ``"hadamard"``, ``"concat"``, ``"outer"`` — the three
-            canonical state kinds. Ignored when ``lift`` is given.
+        state: one of ``"hadamard"``, ``"concat"``, ``"outer"``,
+            ``"shifted_hadamard"`` — the four canonical state kinds. Ignored
+            when ``lift`` is given.
         lift: a custom lift specification built from
             :func:`thetamem.branch` / :func:`thetamem.key` /
             :func:`thetamem.key_part` / :func:`thetamem.normalize` /
-            :func:`thetamem.hadamard` / :func:`thetamem.outer` /
-            :func:`thetamem.concat`.
+            :func:`thetamem.roll` / :func:`thetamem.hadamard` /
+            :func:`thetamem.outer` / :func:`thetamem.concat`.
         feature_width: default width of ``branch()`` factors; ``None`` means
             ``key_dim``.
         update: ``"sum"`` (pure additive), ``"second_pass"`` (additive base

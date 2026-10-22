@@ -44,6 +44,19 @@ class MQARDataTest(unittest.TestCase):
         self.assertEqual(segments[0][0].shape, (4, 64))
         self.assertEqual(segments[1][0].shape, (2, 128))
 
+    def test_long_eval_slices_are_valid_at_the_recorded_vocabulary(self):
+        self.assertEqual(
+            mqar.LONG_EVAL_SLICES,
+            ((1024, 1_000, 256), (2048, 1_000, 512), (4096, 1_000, 512)),
+        )
+        for seq_len, _, kv_pairs in mqar.LONG_EVAL_SLICES:
+            inputs, labels = mqar.generate(
+                2, seq_len, kv_pairs, vocab_size=8_192, seed=1_123
+            )
+            self.assertEqual(inputs.shape, (2, seq_len))
+            answered = (labels != -100).sum(dim=1)
+            self.assertTrue((answered == kv_pairs).all())
+
 
 class MADDataTest(unittest.TestCase):
     def test_fuzzy_shapes(self):

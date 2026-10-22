@@ -22,9 +22,21 @@ matter. `ThetaMemLayer` restores output scale with a per-head RMSNorm.
 
 - `branch`: `f(x)=Wx`.
 - `hadamard`: `phi(x)=f_a(x) * f_b(x)`.
+- `roll`: `roll(f, s)_i = f_{i-s mod F}`, a parameter-free coordinate shift.
 - `concat`: a direct sum of independent state blocks.
 - `outer`: `Phi(x)=f_1(x) (x) ... (x) f_m(x)`, with one state axis per
   factor.
+
+The `shifted_hadamard` preset applies this algebra to the halves `a, b` of
+the projected key, `phi(x)=[a*b ; a*roll(b,1)]`. Its kernel is a signed
+degree-two polynomial with no learned lift parameters,
+
+```text
+<phi(q),phi(k)> = sum_f a_f(q) a_f(k) [ b_f(q) b_f(k) + b_{f-1}(q) b_{f-1}(k) ],
+```
+
+at width `key_dim`, so its state is exactly a linear key's. Like every
+two-factor product it is even, `phi(-x)=phi(x)`.
 
 For an outer lift, token-pair scores factorize:
 
@@ -197,6 +209,10 @@ Q/K: projection -> causal Conv -> SiLU -> RoPE -> L2 -> lift -> memory
 V:   projection -> causal Conv -> SiLU -> memory
 out: HeadRMSNorm(read) * low-rank SiLU gate -> output projection.
 ```
+
+The 2026-08 matched-state suite measured the raw route
+`Q/K: projection -> causal Conv -> shifted_hadamard -> memory` with the same
+V path and output shell.
 
 All stages are configurable. See [API.md](API.md) for the direct-Hadamard
 route and ordered frontend operations.
